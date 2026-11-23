@@ -36,23 +36,41 @@ An open-source, **local-first** web application (Python + FastAPI + Playwright +
 
 ## Quick Start
 
-### Prerequisites
-- **Python 3.11+** (`winget install Python.Python.3.12` on Windows, or [python.org](https://www.python.org/downloads/))
+### One-Command Installers *(Easiest!)*
+
+- **Windows (PowerShell)**:
+  ```powershell
+  irm https://raw.githubusercontent.com/guidoratti/job-hunter-ai/main/install.ps1 | iex
+  ```
+  *(Automatically installs Git & Python 3.12 if needed, downloads Job Hunter AI to `%USERPROFILE%\JobHunterAI`, installs dependencies + Chromium, and creates a **Job Hunter AI** Start Menu shortcut!)*
+
+- **macOS / Linux (Terminal)**:
+  ```bash
+  curl -fsSL https://raw.githubusercontent.com/guidoratti/job-hunter-ai/main/install.sh | bash
+  ```
+  *(Downloads Job Hunter AI to `~/JobHunterAI`, installs dependencies + Chromium, and creates a double-clickable **Job Hunter AI.command** launcher on macOS Desktop or a Linux desktop shortcut!)*
+
+---
+
+### Manual Install
+
+#### Prerequisites
+- **Python 3.10+** (`winget install Python.Python.3.12` on Windows, `brew install python@3.12` on macOS, or [python.org](https://www.python.org/downloads/) — Python 3.9 on macOS is also supported automatically via `eval_type_backport`)
 - **Google Chrome** or **Microsoft Edge** (used for persistent browser automation)
 - Either **Ollama** ([ollama.com/download](https://ollama.com/download)) for 100% free local AI **or** an API key from **OpenRouter / Google Gemini / OpenAI / Anthropic**.
 
-### Windows
+#### Windows
 ```powershell
-git clone https://github.com/<your-username>/job-hunter-ai.git
+git clone https://github.com/guidoratti/job-hunter-ai.git
 cd job-hunter-ai
 .\setup.bat
 .\run.bat
 ```
 *(Double-clicking `setup.bat` then `run.bat` also works!)*
 
-### macOS / Linux
+#### macOS / Linux
 ```bash
-git clone https://github.com/<your-username>/job-hunter-ai.git
+git clone https://github.com/guidoratti/job-hunter-ai.git
 cd job-hunter-ai
 chmod +x setup.sh run.sh
 ./setup.sh
