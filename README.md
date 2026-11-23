@@ -1,6 +1,6 @@
 # 🎯 Job Hunter AI
 
-> *We fight bots with AI agents!*
+> *Automating the boring stuff since five minutes ago.*
 
 An open-source, **local-first** web application (Python + FastAPI + Playwright + Multi-Agent AI) that searches, scores, prioritizes, and helps automatically apply for jobs across **LinkedIn** (Easy Apply + External ATS links), **Indeed**, **Glassdoor**, **ZipRecruiter**, and **Remotive** — with a background persistent browser and human-in-the-loop roadblock handling.
 
