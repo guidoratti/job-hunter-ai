@@ -95,6 +95,17 @@ async def apply_external_job(
 
     # Check for login / account creation / CAPTCHA roadblock
     roadblock = await detect_login_or_roadblock(page)
+    if roadblock and "captcha" not in roadblock.lower():
+        # Automatically attempt SSO login (LinkedIn first, then Google fallback) before pausing!
+        page, sso_ok = await browser_manager.try_auto_sso_login(
+            page, preferred_order=("linkedin", "google"), job_id=job_id
+        )
+        if sso_ok:
+            await asyncio.sleep(2.0)
+            # Re-check if another landing Apply button appeared after login
+            page, _ = await _try_click_landing_apply(page)
+            roadblock = await detect_login_or_roadblock(page)
+
     if roadblock:
         decision = await browser_manager.request_human_action(
             reason=roadblock,

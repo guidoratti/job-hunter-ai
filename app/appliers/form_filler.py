@@ -30,6 +30,156 @@ def format_phone_for_job(raw_phone: str, job: dict[str, Any]) -> str:
     return phone
 
 
+def _parse_currency_numbers(text: str) -> list[float]:
+    """Extract numeric currency values from PT/EN strings like 'Entre R$ 9.501,00 e R$ 11.000' or '$8k - $10k'."""
+    if not text:
+        return []
+    nums: list[float] = []
+    # Match formatted numbers with optional k/K suffix
+    pattern = re.compile(r"(\d{1,3}(?:[.,]\d{3})+(?:[.,]\d{1,2})?|\d+(?:[.,]\d+)?)(\s*[kK]\b)?")
+    for m in pattern.finditer(text):
+        raw = m.group(1)
+        has_k = bool(m.group(2))
+        try:
+            if has_k:
+                val = float(raw.replace(",", ".")) * 1000.0
+            elif "." in raw and "," in raw:
+                if raw.rfind(",") > raw.rfind("."):
+                    # Brazilian/EU format: 1.501,00
+                    val = float(raw.replace(".", "").replace(",", "."))
+                else:
+                    # US format: 1,501.00
+                    val = float(raw.replace(",", ""))
+            elif "." in raw:
+                parts = raw.split(".")
+                if len(parts[-1]) == 3 and all(len(p) == 3 for p in parts[1:]):
+                    # Thousands separator: 2.500 or 11.000
+                    val = float("".join(parts))
+                else:
+                    val = float(raw)
+            elif "," in raw:
+                parts = raw.split(",")
+                if len(parts[-1]) == 3 and all(len(p) == 3 for p in parts[1:]):
+                    # US thousands separator: 2,500
+                    val = float("".join(parts))
+                else:
+                    # Decimal comma: 1500,00
+                    val = float(raw.replace(",", "."))
+            else:
+                val = float(raw)
+            nums.append(val)
+        except ValueError:
+            continue
+    return nums
+
+
+def compute_target_salary(profile: dict[str, Any]) -> float | None:
+    """Compute the candidate's target average salary from salary_min / salary_max (or salary_expectation)."""
+    try:
+        smin = float(profile.get("salary_min") or 0)
+    except (TypeError, ValueError):
+        smin = 0.0
+    try:
+        smax = float(profile.get("salary_max") or 0)
+    except (TypeError, ValueError):
+        smax = 0.0
+
+    if smin > 0 and smax > 0:
+        return (smin + smax) / 2.0
+    if smin > 0:
+        return smin
+    if smax > 0:
+        return smax
+
+    exp_text = str(profile.get("salary_expectation") or "")
+    nums = [n for n in _parse_currency_numbers(exp_text) if n >= 500]
+    if len(nums) >= 2:
+        return (min(nums) + max(nums)) / 2.0
+    if len(nums) == 1:
+        return nums[0]
+    return None
+
+
+def _parse_salary_option_range(opt_text: str) -> tuple[float, float] | None:
+    """Parse a salary range option into (low, high) bounds."""
+    nums = _parse_currency_numbers(opt_text)
+    if not nums:
+        return None
+    low_txt = opt_text.lower()
+    if len(nums) >= 2:
+        return (min(nums[0], nums[1]), max(nums[0], nums[1]))
+    val = nums[0]
+    if any(k in low_txt for k in ("até", "ate ", "up to", "menos de", "below", "under", "fino a", "<")):
+        return (0.0, val)
+    if any(k in low_txt for k in ("acima", "mais de", "above", "over", "more than", "oltre", "+", ">")):
+        return (val, float("inf"))
+    return (val, val)
+
+
+def looks_like_salary_options(options: list[str]) -> bool:
+    """Detect whether a list of radio/select options represents salary brackets."""
+    if len(options) < 2:
+        return False
+    currency_hits = 0
+    for opt in options:
+        low = opt.lower()
+        has_currency = any(sym in opt for sym in ("R$", "$", "€", "£")) or any(
+            k in low for k in ("brl", "usd", "eur", "reais", "mil")
+        )
+        nums = _parse_currency_numbers(opt)
+        if has_currency and nums:
+            currency_hits += 1
+        elif len(nums) >= 2 and max(nums) >= 1000:
+            currency_hits += 1
+    return currency_hits >= 2
+
+
+def select_salary_option(
+    options: list[str],
+    profile: dict[str, Any],
+    question_label: str = "",
+) -> str | None:
+    """Choose the option whose salary bracket contains (or is closest to) the candidate's average salary."""
+    target = compute_target_salary(profile)
+    if target is None or target <= 0 or not options:
+        return None
+
+    parsed: list[tuple[str, float, float]] = []
+    for opt in options:
+        rng = _parse_salary_option_range(opt)
+        if rng is not None:
+            parsed.append((opt, rng[0], rng[1]))
+    if not parsed:
+        return None
+
+    # Auto-adjust monthly vs annual if the scale clearly differs (e.g. profile monthly 10k vs annual 120k options)
+    finite_vals = [v for _, lo, hi in parsed for v in (lo, hi) if v > 0 and v != float("inf")]
+    period = (profile.get("salary_period") or "monthly").lower()
+    q_low = (question_label or "").lower()
+    if finite_vals:
+        median_opt = sorted(finite_vals)[len(finite_vals) // 2]
+        if period == "monthly" and (any(k in q_low for k in ("annual", "anual", "per year", "ao ano")) or (target < 35000 and median_opt > 50000)):
+            target *= 12.0
+        elif period == "annual" and (any(k in q_low for k in ("mensal", "monthly", "por mês", "por mes", "clt")) or (target > 50000 and median_opt < 35000)):
+            target /= 12.0
+
+    # 1. Prefer exact bracket match (low <= target <= high)
+    for opt, lo, hi in parsed:
+        if lo <= target <= hi:
+            return opt
+
+    # 2. Otherwise pick the closest bracket
+    def _dist(lo: float, hi: float) -> float:
+        if target < lo:
+            return lo - target
+        if target > hi:
+            return target - hi
+        return 0.0
+
+    best_opt = min(parsed, key=lambda item: _dist(item[1], item[2]))[0]
+    return best_opt
+
+
 async def detect_login_or_roadblock(page) -> str | None:
     """Detect common login walls, account creation prompts, or human verification checks."""
     url_low = page.url.lower()
@@ -152,26 +302,85 @@ async def fill_visible_form_fields(page, job: dict[str, Any], container=None) ->
         return aria.trim();
       }
 
+      function getRadioOptionLabel(el) {
+        if (el.id) {
+          const lbl = document.querySelector(`label[for="${CSS.escape(el.id)}"]`);
+          if (lbl && lbl.innerText.trim()) return lbl.innerText.trim();
+        }
+        const parentLabel = el.closest('label');
+        if (parentLabel && parentLabel.innerText.trim()) return parentLabel.innerText.trim();
+        if (el.parentElement && el.parentElement.innerText && el.parentElement.innerText.trim().length < 140) {
+          return el.parentElement.innerText.trim();
+        }
+        return (el.getAttribute('aria-label') || el.value || '').trim();
+      }
+
+      function getRadioGroupLabel(radios, fallback) {
+        const first = radios[0];
+        const optionSet = new Set(radios.map(r => getRadioOptionLabel(r).toLowerCase()));
+        let node = first.closest('fieldset, [role="radiogroup"], .fb-dash-form-element, .form-group') || first.parentElement;
+        for (let depth = 0; depth < 5 && node && node !== document.body; depth++) {
+          const candidates = node.querySelectorAll('legend, h1, h2, h3, h4, p, [class*="question" i], [class*="title" i], [class*="label" i]');
+          for (const c of candidates) {
+            if (c.querySelector('input[type="radio"]')) continue;
+            const txt = (c.innerText || '').trim();
+            if (txt && txt.length >= 4 && txt.length <= 260 && !optionSet.has(txt.toLowerCase())) {
+              return txt;
+            }
+          }
+          // Check previous sibling heading/paragraph
+          let prev = node.previousElementSibling;
+          if (prev) {
+            const txt = (prev.innerText || '').trim();
+            if (txt && txt.length >= 4 && txt.length <= 260 && !optionSet.has(txt.toLowerCase())) {
+              return txt;
+            }
+          }
+          node = node.parentElement;
+        }
+        return fallback;
+      }
+
       const elements = container.querySelectorAll('input, textarea, select');
       let idx = 0;
       for (const el of elements) {
-        const style = window.getComputedStyle(el);
-        if (style.display === 'none' || style.visibility === 'hidden' || el.disabled) continue;
         const type = (el.type || el.tagName).toLowerCase();
+        if (el.disabled) continue;
         if (['hidden', 'submit', 'button', 'file', 'password', 'image', 'reset', 'search'].includes(type)) continue;
+
+        const style = window.getComputedStyle(el);
+        const isVis = style.display !== 'none' && style.visibility !== 'hidden';
+        if (!isVis && type !== 'radio') continue;
 
         const key = el.name || el.id || `auto_field_${idx}`;
         if (type === 'radio') {
           if (seen.has(key)) continue;
+          const radios = el.name
+            ? Array.from(container.querySelectorAll(`input[type="radio"][name="${CSS.escape(el.name)}"]`))
+            : [el];
+          // Ensure at least one radio or its parent label is actually visible on screen
+          const anyVisible = radios.some(r => {
+            const s = window.getComputedStyle(r);
+            if (s.display !== 'none' && s.visibility !== 'hidden') return true;
+            const lbl = (r.id && document.querySelector(`label[for="${CSS.escape(r.id)}"]`)) || r.closest('label') || r.parentElement;
+            if (!lbl) return false;
+            const ls = window.getComputedStyle(lbl);
+            return ls.display !== 'none' && ls.visibility !== 'hidden' && lbl.getBoundingClientRect().height > 0;
+          });
+          if (!anyVisible) continue;
           seen.add(key);
-          const radios = Array.from(container.querySelectorAll(`input[type="radio"][name="${CSS.escape(el.name)}"]`));
           const alreadyChecked = radios.some(r => r.checked);
           if (alreadyChecked) continue;
-          const options = radios.map(r => getLabel(r) || r.value).filter(Boolean);
-          const group = el.closest('fieldset, .fb-dash-form-element');
-          const label = group ? (group.querySelector('legend, span')?.innerText?.trim() || el.name) : el.name;
-          el.setAttribute('data-jh-id', `jh_${idx}`);
-          fields.push({ id: `jh_${idx}`, radio_name: el.name, label, type: 'radio', options, required: el.required || true });
+          const fid = `jh_${idx}`;
+          const options = [];
+          radios.forEach((r, rIdx) => {
+            r.setAttribute('data-jh-radio-group', fid);
+            r.setAttribute('data-jh-radio-opt', String(rIdx));
+            options.push(getRadioOptionLabel(r) || r.value || `Option ${rIdx + 1}`);
+          });
+          const label = getRadioGroupLabel(radios, el.name || '');
+          el.setAttribute('data-jh-id', fid);
+          fields.push({ id: fid, radio_name: el.name, label, type: 'radio', options, required: el.required || true });
           idx++;
           continue;
         }
@@ -206,6 +415,26 @@ async def fill_visible_form_fields(page, job: dict[str, Any], container=None) ->
         });
         idx++;
       }
+
+      // Also support custom ARIA radiogroups (e.g. React/MUI/Gupy without native <input type="radio">)
+      const ariaGroups = container.querySelectorAll('[role="radiogroup"]');
+      for (const grp of ariaGroups) {
+        if (grp.querySelector('input[type="radio"]')) continue; // already handled above
+        const items = Array.from(grp.querySelectorAll('[role="radio"]'));
+        if (!items.length) continue;
+        if (items.some(it => it.getAttribute('aria-checked') === 'true')) continue;
+        const fid = `jh_${idx}`;
+        const options = [];
+        items.forEach((it, rIdx) => {
+          it.setAttribute('data-jh-radio-group', fid);
+          it.setAttribute('data-jh-radio-opt', String(rIdx));
+          options.push((it.innerText || it.getAttribute('aria-label') || '').trim() || `Option ${rIdx + 1}`);
+        });
+        const label = grp.getAttribute('aria-label') || getRadioGroupLabel(items, '');
+        fields.push({ id: fid, radio_name: '', label, type: 'radio', options, is_aria_radio: true, required: true });
+        idx++;
+      }
+
       return fields;
     }
     """
@@ -253,11 +482,47 @@ async def fill_visible_form_fields(page, job: dict[str, Any], container=None) ->
         "apresente-se",
         "why do you want",
     )
+    salary_keywords = (
+        "pretensão",
+        "pretensao",
+        "remuneração",
+        "remuneracao",
+        "salário",
+        "salario",
+        "faixa salarial",
+        "salary",
+        "compensation",
+        "pay expectation",
+        "expected pay",
+        "retribuzione",
+        "ral",
+    )
+    target_salary = compute_target_salary(profile)
 
     for f in extracted:
         lbl = (f.get("label") or "").lower()
         ftype = f.get("type")
         opts = f.get("options") or []
+
+        # Rule: Match salary range options (radio/select) or text/number inputs to the candidate's average salary
+        is_salary_q = any(k in lbl for k in salary_keywords) or (ftype in ("radio", "select") and looks_like_salary_options(opts))
+        if is_salary_q and target_salary is not None:
+            if ftype in ("radio", "select") and opts:
+                best_salary_opt = select_salary_option(opts, profile, f.get("label") or "")
+                if best_salary_opt:
+                    direct_answers[f["id"]] = best_salary_opt
+                    await browser_manager.log(
+                        f"💰 Matched average salary ({target_salary:,.0f}) → selected '{best_salary_opt}'",
+                        job_id=job.get("id"),
+                    )
+                    continue
+            elif ftype in ("text", "number"):
+                direct_answers[f["id"]] = str(int(round(target_salary)))
+                await browser_manager.log(
+                    f"💰 Filled average salary expectation: {int(round(target_salary))}",
+                    job_id=job.get("id"),
+                )
+                continue
 
         # Rule: Always signal "LinkedIn" when asked where candidate heard about the position
         if any(k in lbl for k in heard_about_keywords):
@@ -332,17 +597,61 @@ async def fill_visible_form_fields(page, job: dict[str, Any], container=None) ->
         ftype = meta["type"]
         try:
             if ftype == "radio":
-                rname = meta.get("radio_name")
-                radios = scope.locator(f"input[type='radio'][name='{rname}']")
-                count = await radios.count()
-                for i in range(count):
-                    r = radios.nth(i)
-                    r_val = (await r.get_attribute("value") or "").lower()
-                    parent_text = (await r.locator("xpath=..").inner_text()).lower()
-                    if str(val).lower() in (r_val, parent_text) or str(val).lower() in parent_text:
-                        await r.check(force=True)
-                        filled_count += 1
+                opts_list = meta.get("options") or []
+                val_low = str(val).strip().lower()
+                matched_idx = None
+                for o_idx, o_txt in enumerate(opts_list):
+                    if o_txt.strip().lower() == val_low or val_low in o_txt.strip().lower():
+                        matched_idx = o_idx
                         break
+
+                clicked = False
+                if matched_idx is not None:
+                    target_radio = scope.locator(
+                        f"[data-jh-radio-group='{fid}'][data-jh-radio-opt='{matched_idx}']"
+                    ).first
+                    if await target_radio.count() > 0:
+                        try:
+                            await target_radio.scroll_into_view_if_needed(timeout=3000)
+                        except Exception:
+                            pass
+                        if meta.get("is_aria_radio"):
+                            await target_radio.click(force=True)
+                            clicked = True
+                        else:
+                            # Prefer clicking associated <label> (triggers React onChange cleanly), fallback to .check(force=True)
+                            rid = await target_radio.get_attribute("id")
+                            if rid:
+                                lbl_el = page.locator(f"label[for='{rid}']").first
+                                if await lbl_el.count() > 0 and await lbl_el.is_visible():
+                                    try:
+                                        await lbl_el.click(timeout=3000)
+                                        clicked = True
+                                    except Exception:
+                                        pass
+                            if not clicked:
+                                try:
+                                    await target_radio.check(force=True, timeout=3000)
+                                    clicked = True
+                                except Exception:
+                                    await target_radio.evaluate("n => n.click()")
+                                    clicked = True
+
+                if not clicked:
+                    rname = meta.get("radio_name")
+                    if rname:
+                        radios = scope.locator(f"input[type='radio'][name='{rname}']")
+                        count = await radios.count()
+                        for i in range(count):
+                            r = radios.nth(i)
+                            r_val = (await r.get_attribute("value") or "").lower()
+                            parent_text = (await r.locator("xpath=..").inner_text()).lower()
+                            if val_low in (r_val, parent_text) or val_low in parent_text:
+                                await r.check(force=True)
+                                clicked = True
+                                break
+                if clicked:
+                    filled_count += 1
             elif ftype == "select":
                 sel = scope.locator(f"[data-jh-id='{fid}']").first
                 try:

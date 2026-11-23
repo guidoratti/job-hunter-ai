@@ -496,6 +496,135 @@ class BrowserManager:
         await self.log(msg, level="info")
         return {"filled": filled_user or filled_pass, "message": msg}
 
+    async def try_auto_sso_login(
+        self,
+        page,
+        preferred_order: tuple[str, ...] = ("linkedin", "google"),
+        job_id: int | None = None,
+    ) -> tuple[Any, bool]:
+        """
+        Automatically attempt SSO sign-in on a job site's login page (e.g., Gupy)
+        in priority order: LinkedIn first, then Google.
+        Reuses the persistent Chrome profile's saved SSO cookies so it advances without blocking.
+        Returns (active_page, succeeded).
+        """
+        login_url = page.url
+        status = await self.get_sso_session_status()
+        profile = await db.get_profile()
+        user_email = (profile.get("email") or "").strip().lower()
+
+        # Dismiss common cookie banners (e.g. Gupy 'Aceitar Cookies') that can overlap SSO buttons
+        for cookie_txt in ("Aceitar Cookies", "Aceitar todos", "Accept Cookies", "Accept all"):
+            cbtn = page.locator(f"button:has-text('{cookie_txt}'):visible").first
+            if await cbtn.count() > 0:
+                try:
+                    await cbtn.click(timeout=2000)
+                    await asyncio.sleep(0.5)
+                    break
+                except Exception:
+                    pass
+
+        for prov in preferred_order:
+            prov_low = prov.lower()
+            # Prefer providers that are validated in browser cookies or saved in vault
+            cred = await db.get_credential_by_provider(prov_low)
+            is_available = bool(status.get(prov_low, {}).get("validated")) or (cred is not None)
+            if not is_available:
+                continue
+
+            # Find visible SSO button for this provider on the login page
+            sso_btn = None
+            btn_loc = page.locator(
+                f"button:has-text('{prov_low}'), a:has-text('{prov_low}'), [role='button']:has-text('{prov_low}'), [aria-label*='{prov_low}' i]"
+            )
+            cnt = await btn_loc.count()
+            for idx in range(min(cnt, 6)):
+                el = btn_loc.nth(idx)
+                try:
+                    if await el.is_visible():
+                        sso_btn = el
+                        break
+                except Exception:
+                    continue
+
+            if sso_btn is None:
+                continue
+
+            await self.log(f"🔑 Login wall detected — trying automatic {prov_low.title()} SSO sign-in...", job_id=job_id)
+            ctx = page.context
+            before_pages = list(ctx.pages)
+            try:
+                await sso_btn.scroll_into_view_if_needed(timeout=3000)
+                await sso_btn.click(timeout=5000)
+            except Exception:
+                try:
+                    await sso_btn.evaluate("n => n.click()")
+                except Exception:
+                    continue
+
+            await asyncio.sleep(3.5)
+
+            # Handle OAuth popup window if one opened
+            new_pages = [p for p in ctx.pages if p not in before_pages and not p.is_closed()]
+            auth_page = new_pages[-1] if new_pages else page
+            try:
+                await auth_page.wait_for_load_state("domcontentloaded", timeout=15000)
+            except Exception:
+                pass
+
+            # If Google/LinkedIn asks to pick the saved account or click Allow/Continue, handle automatically
+            if not auth_page.is_closed():
+                if user_email:
+                    acct_tile = auth_page.locator(f"[data-identifier='{user_email}'], div:has-text('{user_email}')").first
+                    if await acct_tile.count() > 0:
+                        try:
+                            if await acct_tile.is_visible():
+                                await acct_tile.click(timeout=3000)
+                                await asyncio.sleep(2.5)
+                        except Exception:
+                            pass
+
+                for consent_txt in ("Allow", "Permitir", "Continue", "Continuar", "Confirmar", "Authorize"):
+                    if auth_page.is_closed():
+                        break
+                    c_el = auth_page.locator(f"button:has-text('{consent_txt}'):visible").first
+                    if await c_el.count() > 0:
+                        try:
+                            await c_el.click(timeout=2500)
+                            await asyncio.sleep(2.5)
+                            break
+                        except Exception:
+                            pass
+
+            # Wait up to 8s for redirect back into the application (leaving /signin or /login)
+            for _ in range(8):
+                await asyncio.sleep(1.0)
+                if page.is_closed():
+                    open_pages = [p for p in ctx.pages if not p.is_closed()]
+                    if open_pages:
+                        page = open_pages[-1]
+                cur_url = page.url.lower()
+                still_login_url = any(k in cur_url for k in ("/signin", "/sign-in", "/login", "accounts.google.com", "linkedin.com/oauth", "linkedin.com/uas"))
+                pwd_vis = 0
+                try:
+                    pwd_vis = await page.locator("input[type='password']:visible").count()
+                except Exception:
+                    pass
+                if not still_login_url and pwd_vis == 0:
+                    await self.log(f"✅ Signed in automatically via {prov_low.title()} SSO! Advancing...", level="success", job_id=job_id)
+                    return page, True
+
+            await self.log(f"{prov_low.title()} SSO did not complete automatically; trying next option...", level="warning", job_id=job_id)
+            # Return to original login URL before trying the fallback SSO provider
+            try:
+                if page.url != login_url:
+                    await page.goto(login_url, wait_until="domcontentloaded", timeout=25000)
+                    await asyncio.sleep(2.0)
+            except Exception:
+                pass
+
+        return page, False
+
     async def request_human_action(
         self,
         reason: str,
