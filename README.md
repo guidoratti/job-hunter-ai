@@ -20,8 +20,10 @@ An open-source, **local-first** web application (Python + FastAPI + Playwright +
   - Supports **🦙 Local Ollama (100% Free & Offline)** with one-click **⚡ Setup Local Server**, **OpenRouter (`:free` + Paid)**, **Google Gemini**, **OpenAI**, and **Anthropic Claude**.
 - **Salary Range Intelligence**:
   - Set your Min/Max target salary (BRL / USD / EUR, Monthly / Yearly). AI estimates each role's market average, marks jobs as **In Range / Above Range / Below Range**, and uses market averages when filling forms.
-- **Trilingual Support (`PT` / `EN` / `IT`) & Per-Language Profiles**:
+- **Trilingual Support (`PT` / `EN` / `IT`), Per-Language Profiles & Critical CV Analysis**:
   - Detects each job's language automatically, attaches the matching CV, and maintains independent editable **EN** and **PT** Master Candidate Profiles.
+  - Built-in **🔬 CV Analysis** tab audits solely your uploaded documents to surface strengths, core skills, suitable areas, compatible positions, critical gaps, and LinkedIn peer job titles (3-minute scan).
+  - On-demand **✨ GenAI** T-Letter & Cover Letter (≤ 850 chars, first-person, document-only) with mandatory user approval before submission.
 - **Background Persistent Browser + SSO Sessions + Roadblock Pause/Resume**:
   - Runs Chrome/Edge minimized in the background (with **👁️ Show Browser** / **➖ Hide** toggles).
   - Connect **Google, LinkedIn, Microsoft, or Discord SSO** via persistent browser cookies.
@@ -86,22 +88,39 @@ Pick **Option A (100% Free Local AI)** or **Option B (Cloud API)** — or use bo
    - All fields remain editable and **auto-save** automatically as you type.
 4. Fill in your **Target Salary (Min / Max)**, Currency (`BRL`/`USD`/`EUR`), and Period (`Monthly`/`Yearly`).
 
-### 3. Connect Your Job Platforms (**Auto-Fill & Credential Vault** tab)
+### 3. Run a Critical CV Audit (**🔬 CV Analysis** tab)
+1. Open the **🔬 CV Analysis** tab — this tool analyzes **solely the documents you uploaded** in *Profile & CVs* (respecting your Primary / Secondary Reference Priority).
+2. Choose **`PT`** (Brazilian Portuguese) or **`EN`** (English) using the toggle in the top-right corner, then click **🔍 Run Check**.
+   - Both the AI analysis and all section headings are generated strictly in the selected language, and **PT** and **EN** audits are saved independently.
+3. Wait for the live **3-minute progress bar** as the tool:
+   - Scans LinkedIn People (strictly capped at 3 minutes) to discover what job titles real professionals with similar CVs are using.
+   - Generates a candid executive audit covering:
+     - **Executive Audit Verdict**
+     - **💪 Main Strengths** (grounded in concrete evidence from your files)
+     - **🧠 Core Skills**
+     - **🏢 Most Suitable Areas of Work**
+     - **🎯 Most Compatible Job Positions**
+     - **⚠️ Important Gaps & Recommendations** (missing certifications, hands-on gaps, etc., ranked High / Medium / Low)
+     - **🔎 LinkedIn Peer Titles (3-Min Market Scan)**
+4. Click **`+ Add to Search`** (or **`+ Adicionar à Busca`**) next to any compatible position or LinkedIn peer title to add it straight into your **Target Job Titles / Keywords** box.
+
+### 4. Connect Your Job Platforms (**Auto-Fill & Credential Vault** tab)
 1. Click **🔵 Google SSO**, **💼 LinkedIn SSO**, **🪟 Microsoft SSO**, or **🎮 Discord SSO**.
 2. The minibrowser opens directly to that platform's login page. Sign in once (including any 2FA) — your session cookies are saved automatically in the persistent Chrome profile.
 3. Once validated, the button turns greyed-out (**`✅ Validated`**) and only unlocks if your session ever expires or is revoked.
 4. Optionally store traditional email/password logins for ATS portals (like Gupy or Workday) — encrypted locally with AES-256.
 
-### 4. Search, Match & Apply (**Jobs & Apply Queue** tab)
+### 5. Search, Match & Apply (**Jobs & Apply Queue** tab)
 1. Edit **Target Job Titles / Keywords**, **Locations**, and open **🧭 Human Fit, Skills, Culture & Personal Positioning** to set your skills, industries, multi-select seniority, culture values, personal positioning, and dealbreakers (everything auto-saves).
 2. Check the platforms you want to search (**LinkedIn** always runs first), then click **🔍 Search & Score Jobs** (or **🔄 Refresh Search** to clear old listings first).
    - Searches are capped at **50 jobs or 5 minutes** with a live countdown bar and a **🛑 STOP** button.
    - Watch real-time progress in the **🤖 Live Agent Activity** panel (click **👁️ Watch in Browser** anytime to view the background browser).
-3. Review your ranked matches (sorted highest Match Score first, with 💰 Salary Range fit badges and 📝 **T-Letter & Cover Letter** previews).
+3. Review your ranked matches (sorted highest Match Score first, with 💰 Salary Range fit badges). Click **📝 T-Letter & Cover Letter** on any job and use the **✨ GenAI** buttons to generate fresh first-person T-Letters or Cover Letters (≤ 850 chars) on demand.
 4. Check the jobs you want and click **🚀 Apply to Selected** (or **⚡ Apply to All**).
-   - Keep **Auto-Submit** unchecked to review each form before final submission, or check it to submit automatically unless a login/CAPTCHA/unknown-field roadblock appears.
+   - Letters are only auto-generated if the application form actually demands one — and the tool **always pauses for your approval** before submitting any application with a letter.
+   - Keep **Auto-Submit** unchecked to review each form before final submission, or check it to submit automatically unless a login/CAPTCHA/letter/unknown-field roadblock appears.
 
-### 5. Track Performance (**📊 Dashboard** tab)
+### 6. Track Performance (**📊 Dashboard** tab)
 - View KPIs, match-score averages, platform/status/salary breakdowns, top companies, and top roles.
 - Use **🗑️ Clear Statistics** when tuning preferences to measure fresh results, or **☢️ Nuclear Reset** (in **Settings & Live Logs**) to scrub all personal data cleanly.
 
