@@ -295,23 +295,20 @@ async def fill_visible_form_fields(page, job: dict[str, Any], container=None) ->
                 if not letter:
                     try:
                         await browser_manager.log(
-                            f"✍️ Application form requested a Cover Letter — Writer Agent generating one on demand ({(job.get('language') or 'pt').upper()})...",
+                            f"✍️ Application form demanded a Cover Letter — Writer Agent drafting first-person letter (≤850 chars, {(job.get('language') or 'pt').upper()})...",
                             job_id=job.get("id"),
                         )
-                        mats = await ai_engine.generate_application_materials(job)
+                        c_text = await ai_engine.generate_single_letter(job, letter_type="cover_letter", regenerate=False)
                         if job.get("id"):
-                            await db.update_job(
-                                job["id"],
-                                generated_t_letter=mats["t_letter"],
-                                generated_cover_letter=mats["cover_letter"],
-                            )
-                        job["generated_t_letter"] = mats["t_letter"]
-                        job["generated_cover_letter"] = mats["cover_letter"]
-                        letter = mats["cover_letter"] or mats["t_letter"]
+                            await db.update_job(job["id"], generated_cover_letter=c_text)
+                        job["generated_cover_letter"] = c_text
+                        letter = c_text
                     except Exception as exc:
                         await browser_manager.log(f"On-demand letter generation failed: {exc}", level="warning", job_id=job.get("id"))
                 if letter:
                     direct_answers[f["id"]] = letter
+                    # Mark that a letter was inserted so the applier ALWAYS pauses for user approval before submit
+                    job["_letter_requires_approval"] = True
                     continue
         remaining_for_ai.append(f)
 

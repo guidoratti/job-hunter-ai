@@ -640,51 +640,109 @@ Return ONLY a valid JSON object with these exact keys:
                 "salary_note": "",
             }
 
-    async def generate_application_materials(self, job: dict[str, Any]) -> dict[str, str]:
-        """Generate a tailored T-Letter and narrative Cover Letter in the job's language (pt/en/it)."""
-        lang = job.get("language") or "pt"
+    async def generate_single_letter(
+        self,
+        job: dict[str, Any],
+        letter_type: str = "t_letter",
+        regenerate: bool = False,
+    ) -> str:
+        """
+        Generate either a 't_letter' or a 'cover_letter' (<=850 chars) as plain text.
+        Strictly first-person, strictly based ONLY on the user's uploaded documents.
+        """
+        lang = (job.get("language") or "pt").lower()
         lang_name = {"pt": "Brazilian Portuguese", "en": "English", "it": "Italian"}.get(lang, "Brazilian Portuguese")
 
         if not await self.has_any_provider():
-            raise RuntimeError("No AI provider API key is configured. Add one in Settings first.")
+            raise RuntimeError("No AI provider API key or local Ollama server is configured. Set one up in Settings first.")
 
-        # Use compact Master Profile context when primary writer is local Ollama so generation is fast & never times out
-        writer_candidates = await self._get_role_candidates("writer")
-        is_local_writer = bool(writer_candidates and writer_candidates[0].startswith("ollama:"))
-        context = await self.build_candidate_context(target_lang=lang, compact=is_local_writer)
+        # Use ONLY the user's uploaded documents (with profile contact info for sign-off)
+        docs_text, _ = await self._load_uploaded_docs_only(language=lang)
         profile = await db.get_profile()
-        cand_name = profile.get("full_name") or "the candidate"
-        prompt = f"""You are writing tailored job application materials for {cand_name} in {lang_name}.
+        contact_line = " | ".join(
+            p for p in (profile.get("full_name"), profile.get("phone"), profile.get("email"), profile.get("linkedin_url")) if p
+        )
+        variation_note = (
+            "Write a FRESH, distinct variation with a different opening angle and phrasing from any previous draft."
+            if regenerate
+            else ""
+        )
 
-CANDIDATE PROFILE & T-LETTER STYLE:
-{context}
+        if letter_type == "cover_letter":
+            prompt = f"""You are writing a Cover Letter strictly in {lang_name} in FIRST-PERSON ("I" / "Eu" / "Io").
+{variation_note}
+
+CANDIDATE UPLOADED DOCUMENTS (USE ONLY FACTS FROM HERE — NEVER INVENT ANYTHING):
+{docs_text[:18000]}
+
+CONTACT SIGN-OFF:
+{contact_line}
 
 TARGET JOB:
 Title: {job.get('title')}
 Company: {job.get('company')}
 Location: {job.get('location')}
-URL: {job.get('url')}
 Description:
-{(job.get('description') or '')[:10000]}
+{(job.get('description') or '')[:6000]}
 
-INSTRUCTIONS:
-1. Write EVERYTHING strictly in {lang_name}.
-2. Produce two artifacts:
-   - "t_letter": A signature T-Letter format: warm executive greeting, 2-sentence intro, Markdown 2-column table mapping 6-8 key job requirements to the candidate's concrete, quantified experiences (never fabricate metrics; only use facts from their profile), and their contact sign-off.
-   - "cover_letter": A crisp, persuasive 3-paragraph executive cover letter tailored to this exact company and role, ending with the candidate's contact sign-off.
-
-Return ONLY a valid JSON object:
-{{
-  "t_letter": "...",
-  "cover_letter": "..."
-}}
+STRICT RULES:
+1. Write strictly in {lang_name} and strictly in FIRST-PERSON.
+2. Use ONLY facts, roles, companies, and metrics explicitly written in the uploaded documents above.
+3. MAXIMUM LENGTH: 850 characters TOTAL (including greeting and sign-off). Aim for 650-800 characters so it is punchy and never exceeds 850 characters.
+4. Output ONLY the plain text of the cover letter (no JSON, no markdown code fences, no preamble).
 """
-        raw_text = await self._generate_for_role("writer", prompt)
-        data = _extract_json_block(raw_text or "{}")
-        return {
-            "t_letter": str(data.get("t_letter", "")).strip(),
-            "cover_letter": str(data.get("cover_letter", "")).strip(),
-        }
+            text = (await self._generate_for_role("writer", prompt)).strip()
+            text = re.sub(r"^```[a-zA-Z]*\s*|\s*```$", "", text).strip()
+            if len(text) > 850:
+                cut = text[:847]
+                last_dot = max(cut.rfind("."), cut.rfind("\n"))
+                text = (cut[: last_dot + 1] if last_dot > 600 else cut.rstrip() + "...").strip()
+            return text
+
+        # Default: T-Letter
+        if lang == "pt":
+            col_header = "| Requisitos da Posição | Experiências |"
+        elif lang == "it":
+            col_header = "| Requisiti della Posizione | Esperienze |"
+        else:
+            col_header = "| Position Requirements | Experiences |"
+
+        prompt = f"""You are writing a signature T-Letter strictly in {lang_name} in FIRST-PERSON ("I" / "Eu" / "Io").
+{variation_note}
+
+CANDIDATE UPLOADED DOCUMENTS (USE ONLY FACTS FROM HERE — NEVER INVENT ANYTHING):
+{docs_text[:18000]}
+
+CONTACT SIGN-OFF:
+{contact_line}
+
+TARGET JOB:
+Title: {job.get('title')}
+Company: {job.get('company')}
+Location: {job.get('location')}
+Description:
+{(job.get('description') or '')[:7000]}
+
+STRICT RULES:
+1. Write strictly in {lang_name} and strictly in FIRST-PERSON ("Eu..." / "I..." / "Io...").
+2. Use ONLY facts, metrics, tools, and roles explicitly described in the uploaded documents above. NEVER fabricate anything.
+3. Structure:
+   - Brief warm first-person greeting referencing the exact job title and company.
+   - Short 2-sentence first-person intro summarizing relevant experience from the documents.
+   - A 2-column Markdown table with header: {col_header} mapping 6 to 8 key requirements from the job description to concrete experiences from the uploaded documents.
+   - UNMET REQUIREMENTS RULE: If a requirement is NOT directly met in the uploaded documents, explicitly signal that it is not directly held and present a compatible/analogous skill from the documents. If there is NO compatible skill at all in the documents, leave the Experiences cell blank (just a single dash `-`).
+   - Brief closing line and contact sign-off.
+4. Output ONLY the plain text / Markdown of the T-Letter (no JSON, no outer code fences, no meta commentary).
+"""
+        text = (await self._generate_for_role("writer", prompt)).strip()
+        text = re.sub(r"^```[a-zA-Z]*\s*|\s*```$", "", text).strip()
+        return text
+
+    async def generate_application_materials(self, job: dict[str, Any]) -> dict[str, str]:
+        """Generate both a tailored T-Letter and Cover Letter (<=850 chars) in the job's language."""
+        t_letter = await self.generate_single_letter(job, letter_type="t_letter")
+        cover_letter = await self.generate_single_letter(job, letter_type="cover_letter")
+        return {"t_letter": t_letter, "cover_letter": cover_letter}
 
     async def answer_form_questions(
         self,
@@ -905,14 +963,53 @@ Return ONLY a valid JSON object:
         peer_headlines = (peer_scan or {}).get("headlines") or []
         peer_note = (peer_scan or {}).get("note") or ""
 
-        peer_section = (
-            "LIVE LINKEDIN PEER HEADLINES (profiles with similar skills/domains):\n"
-            + "\n".join(f"- {h}" for h in peer_headlines[:35])
-            if peer_headlines
-            else f"LIVE LINKEDIN PEER SCAN NOTE: {peer_note or 'No live headlines collected; infer common equivalent LinkedIn titles used by peers with this exact background.'}"
-        )
+        if lang == "pt":
+            peer_section = (
+                "TÍTULOS REAIS DE PROFISSIONAIS SIMILARES NO LINKEDIN (busca ao vivo):\n"
+                + "\n".join(f"- {h}" for h in peer_headlines[:35])
+                if peer_headlines
+                else f"NOTA DA BUSCA NO LINKEDIN: {peer_note or 'Nenhum título ao vivo coletado; infira títulos equivalentes comuns usados no LinkedIn por profissionais com este perfil.'}"
+            )
+            prompt = f"""Você é um coach executivo de carreira sênior realizando uma AUDITORIA CRÍTICA de um candidato com base EXCLUSIVAMENTE nos documentos enviados abaixo (não presuma nada fora destes documentos).
 
-        prompt = f"""You are a candid, senior executive career coach performing a CRITICAL AUDIT of a candidate based SOLELY on their uploaded documents below (do not assume anything outside these documents).
+DOCUMENTOS ENVIADOS:
+{docs_text[:26000]}
+
+{peer_section}
+
+INSTRUÇÕES OBRIGATÓRIAS:
+1. Escreva TODO o conteúdo EXCLUSIVAMENTE em Português Brasileiro natural e executivo (NÃO misture inglês, exceto nomes próprios de ferramentas/cargos amplamente usados no Brasil).
+2. Seja construtivo, específico e genuinamente crítico — não elogie de forma genérica. Aponte lacunas reais (ex.: falta de certificações, pouca experiência hands-on, métricas pouco claras, lacunas de palavras-chave ATS).
+3. Baseie tudo exclusivamente em evidências presentes nos documentos enviados.
+4. Sintetize os títulos do LinkedIn em cargos pesquisáveis usados por profissionais com histórico semelhante.
+
+Retorne APENAS um objeto JSON válido com exatamente estas chaves:
+{{
+  "executive_verdict": "2 a 3 frases francas em Português Brasileiro resumindo o posicionamento e competitividade no mercado",
+  "main_strengths": ["ponto forte 1 com evidência concreta em português", "ponto forte 2", "... (5 a 7 itens)"],
+  "core_skills": ["competência 1", "competência 2", "... (10 a 16 tags curtas)"],
+  "suitable_areas": [
+    {{"area": "Nome da área ou setor", "why": "1 a 2 frases em português baseadas nos documentos"}}
+  ],
+  "compatible_positions": [
+    {{"title": "Nome do cargo pesquisável", "fit_level": "Alto" | "Forte" | "Adjacente", "why": "1 a 2 frases em português"}}
+  ],
+  "important_gaps": [
+    {{"gap": "Lacuna específica em português (ex.: falta de certificação ou experiência prática)", "severity": "Alta" | "Média" | "Baixa", "recommendation": "Ação prática em português para fechar ou contornar essa lacuna"}}
+  ],
+  "linkedin_peer_titles": [
+    {{"title": "Cargo usado por perfis similares no LinkedIn", "insight": "Por que profissionais com este histórico usam este título (em português)"}}
+  ]
+}}
+"""
+        else:
+            peer_section = (
+                "LIVE LINKEDIN PEER HEADLINES (profiles with similar skills/domains):\n"
+                + "\n".join(f"- {h}" for h in peer_headlines[:35])
+                if peer_headlines
+                else f"LIVE LINKEDIN PEER SCAN NOTE: {peer_note or 'No live headlines collected; infer common equivalent LinkedIn titles used by peers with this exact background.'}"
+            )
+            prompt = f"""You are a candid, senior executive career coach performing a CRITICAL AUDIT of a candidate based SOLELY on their uploaded documents below (do not assume anything outside these documents).
 
 UPLOADED DOCUMENTS:
 {docs_text[:26000]}
@@ -920,14 +1017,14 @@ UPLOADED DOCUMENTS:
 {peer_section}
 
 INSTRUCTIONS:
-1. Write EVERY single field strictly in {lang_name}.
+1. Write EVERY single field strictly in English (do NOT use Portuguese).
 2. Be constructive, specific, and genuinely critical — do not flatter blindly. Call out real gaps (e.g., missing certifications, limited hands-on coding/tooling, unclear metrics, title mismatches, ATS keyword blind spots).
 3. Base everything strictly on evidence inside the uploaded documents.
 4. Synthesize the LinkedIn peer headlines into concrete, searchable job titles that similar professionals use on LinkedIn.
 
 Return ONLY a valid JSON object with these exact keys:
 {{
-  "executive_verdict": "2-3 candid sentences summarizing market positioning and competitiveness",
+  "executive_verdict": "2-3 candid sentences in English summarizing market positioning and competitiveness",
   "main_strengths": ["strength 1 with concrete evidence", "strength 2", "... (5-7 items)"],
   "core_skills": ["skill 1", "skill 2", "... (10-16 concise skill tags)"],
   "suitable_areas": [

@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Job Hunter AI</title>
   <link rel="icon" type="image/x-icon" href="/static/app_icon.ico" />
-  <link rel="stylesheet" href="/static/styles.css" />
+  <link rel="stylesheet" href="/static/styles.css?v=20261123" />
 </head>
 <body>
   <header class="topbar">
@@ -536,12 +536,27 @@
         <h3 id="letterModalTitle" style="margin:0;">Tailored Application Materials</h3>
         <button class="btn btn-secondary btn-sm" onclick="closeModal('letterModal')">Close</button>
       </div>
-      <h4>T-Letter (Requirement | Experience)</h4>
-      <pre id="modalTLetter" class="letter-pre"></pre>
-      <button class="btn btn-secondary btn-sm" onclick="copyText('modalTLetter')">📋 Copy T-Letter</button>
-      <h4 style="margin-top:16px;">Cover Letter</h4>
-      <pre id="modalCoverLetter" class="letter-pre"></pre>
-      <button class="btn btn-secondary btn-sm" onclick="copyText('modalCoverLetter')">📋 Copy Cover Letter</button>
+      <div class="row space-between" style="margin-bottom:6px;">
+        <h4 style="margin:0;">T-Letter (Requirement | Experience)</h4>
+        <span style="font-size:0.78rem; color:var(--muted);">First-person • Document-grounded • Signals unmet requirements</span>
+      </div>
+      <textarea id="modalTLetter" style="min-height:200px; font-family:Consolas, monospace; font-size:0.84rem;" placeholder="Click '✨ GenAI' below to generate a tailored T-Letter from your uploaded documents. Click again anytime for a new version."></textarea>
+      <div class="row" style="margin-top:8px; gap:8px;">
+        <button id="genTLetterBtn" class="btn btn-sm" onclick="generateModalLetter('t_letter')">✨ GenAI</button>
+        <span id="spinnerTLetter" class="mini-spinner" title="Generating T-Letter…"></span>
+        <button class="btn btn-secondary btn-sm" onclick="copyText('modalTLetter')">📋 Copy T-Letter</button>
+      </div>
+
+      <div class="row space-between" style="margin-top:18px; margin-bottom:6px;">
+        <h4 style="margin:0;">Cover Letter</h4>
+        <span id="coverCharCount" style="font-size:0.78rem; color:var(--muted);">0 / 850 chars</span>
+      </div>
+      <textarea id="modalCoverLetter" maxlength="850" oninput="updateCoverCharCount()" style="min-height:150px; font-size:0.88rem;" placeholder="Click '✨ GenAI' below to generate a concise first-person Cover Letter (max 850 characters). Click again anytime for a new version."></textarea>
+      <div class="row" style="margin-top:8px; gap:8px;">
+        <button id="genCoverLetterBtn" class="btn btn-sm" onclick="generateModalLetter('cover_letter')">✨ GenAI</button>
+        <span id="spinnerCoverLetter" class="mini-spinner" title="Generating Cover Letter…"></span>
+        <button class="btn btn-secondary btn-sm" onclick="copyText('modalCoverLetter')">📋 Copy Cover Letter</button>
+      </div>
     </div>
   </div>
 
@@ -563,6 +578,6 @@
     </div>
   </div>
 
-  <script src="/static/app.js"></script>
+  <script src="/static/app.js?v=20261123"></script>
 </body>
 </html>

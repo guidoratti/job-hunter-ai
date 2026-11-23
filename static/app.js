@@ -883,23 +883,55 @@ async function applySingle(jobId) {
   }
 }
 
-async function viewMaterials(jobId) {
-  const job = jobsCache.find((j) => j.id === jobId);
-  const writerModel = document.getElementById("agentWriterModel")?.value || "configured Writer Agent";
-  document.getElementById("letterModalTitle").textContent = `Materials (${(job?.language || "pt").toUpperCase()}) — ${job?.title || ""}`;
-  document.getElementById("modalTLetter").textContent = job?.generated_t_letter || `Generating tailored T-Letter with ${writerModel}…`;
-  document.getElementById("modalCoverLetter").textContent = job?.generated_cover_letter || `Generating Cover Letter with ${writerModel}…`;
-  document.getElementById("letterModal").classList.add("open");
+let activeLetterJobId = null;
 
-  if (!job?.generated_t_letter) {
-    try {
-      const mats = await api(`/api/jobs/${jobId}/materials`, { method: "POST" });
-      document.getElementById("modalTLetter").textContent = mats.t_letter;
-      document.getElementById("modalCoverLetter").textContent = mats.cover_letter;
-      loadJobs();
-    } catch (e) {
-      document.getElementById("modalTLetter").textContent = "Error: " + e.message;
+function updateCoverCharCount() {
+  const ta = document.getElementById("modalCoverLetter");
+  const counter = document.getElementById("coverCharCount");
+  if (!ta || !counter) return;
+  const len = (ta.value || "").length;
+  counter.textContent = `${len} / 850 chars`;
+  counter.style.color = len > 850 ? "var(--danger)" : "var(--muted)";
+}
+
+function viewMaterials(jobId) {
+  activeLetterJobId = jobId;
+  const job = jobsCache.find((j) => j.id === jobId);
+  document.getElementById("letterModalTitle").textContent = `Materials (${(job?.language || "pt").toUpperCase()}) — ${job?.title || ""}`;
+  document.getElementById("modalTLetter").value = job?.generated_t_letter || "";
+  document.getElementById("modalCoverLetter").value = job?.generated_cover_letter || "";
+  updateCoverCharCount();
+  document.getElementById("letterModal").classList.add("open");
+}
+
+async function generateModalLetter(letterType) {
+  if (!activeLetterJobId) return;
+  const isT = letterType === "t_letter";
+  const btn = document.getElementById(isT ? "genTLetterBtn" : "genCoverLetterBtn");
+  const spinner = document.getElementById(isT ? "spinnerTLetter" : "spinnerCoverLetter");
+  const targetTa = document.getElementById(isT ? "modalTLetter" : "modalCoverLetter");
+
+  if (btn) btn.disabled = true;
+  if (spinner) spinner.classList.add("active");
+  try {
+    const res = await api(`/api/jobs/${activeLetterJobId}/materials`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ letter_type: letterType, regenerate: true }),
+    });
+    const text = isT ? res.t_letter : res.cover_letter;
+    if (targetTa) targetTa.value = text || "";
+    const job = jobsCache.find((j) => j.id === activeLetterJobId);
+    if (job) {
+      if (isT) job.generated_t_letter = text || "";
+      else job.generated_cover_letter = text || "";
     }
+    updateCoverCharCount();
+  } catch (e) {
+    alert("GenAI letter error: " + e.message);
+  } finally {
+    if (btn) btn.disabled = false;
+    if (spinner) spinner.classList.remove("active");
   }
 }
 
@@ -1315,6 +1347,13 @@ async function loadCvAnalysis() {
 
 async function runCvAnalysis() {
   setCvRunButtonState(true);
+  // Immediately show the progress bar under the button so user gets instant visual feedback
+  updateCvAnalysisProgress({
+    active: true,
+    stage: `Starting document-only CV Audit & 3-min LinkedIn scan (${cvAnalysisLang.toUpperCase()})…`,
+    deadline_ts: Date.now() / 1000 + 180,
+    found: 0,
+  });
   try {
     await api("/api/cv-analysis/run", {
       method: "POST",
@@ -1322,6 +1361,7 @@ async function runCvAnalysis() {
       body: JSON.stringify({ language: cvAnalysisLang }),
     });
   } catch (e) {
+    updateCvAnalysisProgress({ active: false });
     setCvRunButtonState(false);
     alert("CV Analysis error: " + e.message);
   }
@@ -1347,11 +1387,40 @@ function addTitleToSearchKeywords(title) {
 function renderCvAnalysis() {
   const container = document.getElementById("cvAnalysisContent");
   if (!container) return;
+  const isPt = cvAnalysisLang === "pt";
+  const T = isPt
+    ? {
+        empty: `Nenhuma análise de CV em <strong>PT (Português)</strong> salva ainda. Clique em <strong>🔍 Run Check</strong> acima para auditar seus documentos enviados em Português Brasileiro.`,
+        verdict: "Veredito Executivo da Auditoria (PT)",
+        updated: "Atualizado em",
+        strengths: "💪 Principais Pontos Fortes",
+        skills: "🧠 Competências Principais (Core Skills)",
+        areas: "🏢 Áreas de Atuação Mais Adequadas",
+        positions: "🎯 Cargos Mais Compatíveis",
+        gaps: "⚠️ Lacunas Importantes e Recomendações",
+        peers: "🔎 Títulos no LinkedIn de Perfis Similares (Busca de 3 min)",
+        addBtn: "+ Adicionar à Busca",
+        peerSummary: (n) => `Sintetizado a partir de ${n} perfil(is) similar(es) analisado(s) no LinkedIn.`,
+        none: "Nenhum item encontrado.",
+      }
+    : {
+        empty: `No <strong>EN (English)</strong> CV analysis saved yet. Click <strong>🔍 Run Check</strong> above to audit your uploaded documents in English.`,
+        verdict: "Executive Audit Verdict (EN)",
+        updated: "Updated",
+        strengths: "💪 Main Strengths",
+        skills: "🧠 Core Skills",
+        areas: "🏢 Most Suitable Areas of Work",
+        positions: "🎯 Most Compatible Job Positions",
+        gaps: "⚠️ Important Gaps & Recommendations",
+        peers: "🔎 LinkedIn Peer Titles (3-Min Market Scan)",
+        addBtn: "+ Add to Search",
+        peerSummary: (n) => `Synthesized from ${n} LinkedIn peer profile(s) with similar backgrounds.`,
+        none: "None listed.",
+      };
+
   const data = cvAnalysisCache[cvAnalysisLang];
   if (!data) {
-    container.innerHTML = `<div class="card" style="color:var(--muted); text-align:center;">
-      No <strong>${cvAnalysisLang.toUpperCase()}</strong> CV analysis saved yet. Click <strong>🔍 Run Check</strong> above to audit your uploaded documents in <strong>${cvAnalysisLang === "en" ? "English" : "Brazilian Portuguese"}</strong>.
-    </div>`;
+    container.innerHTML = `<div class="card" style="color:var(--muted); text-align:center;">${T.empty}</div>`;
     return;
   }
 
@@ -1382,9 +1451,9 @@ function renderCvAnalysis() {
         <div class="cv-item-header">
           <div>
             <strong>${escapeHtml(p.title)}</strong>
-            <span class="badge badge-score-high" style="margin-left:6px;">${escapeHtml(p.fit_level || "Strong")}</span>
+            <span class="badge badge-score-high" style="margin-left:6px;">${escapeHtml(p.fit_level || (isPt ? "Forte" : "Strong"))}</span>
           </div>
-          <button class="btn btn-secondary btn-sm" onclick="addTitleToSearchKeywords('${escapeJs(p.title)}')">+ Add to Search</button>
+          <button class="btn btn-secondary btn-sm" onclick="addTitleToSearchKeywords('${escapeJs(p.title)}')">${T.addBtn}</button>
         </div>
         <div style="font-size:0.85rem; color:#cbd5e1;">${escapeHtml(p.why)}</div>
       </div>`
@@ -1394,11 +1463,16 @@ function renderCvAnalysis() {
   const gapsHtml = (data.important_gaps || [])
     .map((g) => {
       const sev = (g.severity || "Medium").toLowerCase();
-      const sevClass = sev === "high" ? "badge-score-low" : sev === "low" ? "badge-score-high" : "badge-score-mid";
+      const sevClass =
+        sev === "high" || sev === "alta"
+          ? "badge-score-low"
+          : sev === "low" || sev === "baixa"
+          ? "badge-score-high"
+          : "badge-score-mid";
       return `<div class="cv-item-card">
         <div class="cv-item-header">
           <strong>${escapeHtml(g.gap)}</strong>
-          <span class="badge ${sevClass}">${escapeHtml(g.severity || "Medium")}</span>
+          <span class="badge ${sevClass}">${escapeHtml(g.severity || (isPt ? "Média" : "Medium"))}</span>
         </div>
         <div style="font-size:0.85rem; color:#cbd5e1;">💡 ${escapeHtml(g.recommendation)}</div>
       </div>`;
@@ -1410,7 +1484,7 @@ function renderCvAnalysis() {
       (pt) => `<div class="cv-item-card">
         <div class="cv-item-header">
           <strong>${escapeHtml(pt.title)}</strong>
-          <button class="btn btn-secondary btn-sm" onclick="addTitleToSearchKeywords('${escapeJs(pt.title)}')">+ Add to Search</button>
+          <button class="btn btn-secondary btn-sm" onclick="addTitleToSearchKeywords('${escapeJs(pt.title)}')">${T.addBtn}</button>
         </div>
         <div style="font-size:0.85rem; color:#cbd5e1;">${escapeHtml(pt.insight)}</div>
       </div>`
@@ -1420,8 +1494,8 @@ function renderCvAnalysis() {
   container.innerHTML = `
     <div class="card">
       <div class="row space-between" style="margin-bottom:8px;">
-        <h3 style="margin:0;">Executive Audit Verdict (${(data.language || cvAnalysisLang).toUpperCase()})</h3>
-        <span style="font-size:0.78rem; color:var(--muted);">Updated: ${(data.updated_at || "").slice(0, 19).replace("T", " ")}</span>
+        <h3 style="margin:0;">${T.verdict}</h3>
+        <span style="font-size:0.78rem; color:var(--muted);">${T.updated}: ${(data.updated_at || "").slice(0, 19).replace("T", " ")}</span>
       </div>
       <p style="margin:0 0 10px; font-size:0.93rem; color:#f1f5f9;">${escapeHtml(data.executive_verdict)}</p>
       <div class="badges">${filesHtml}</div>
@@ -1429,33 +1503,33 @@ function renderCvAnalysis() {
 
     <div class="grid-2">
       <div class="card">
-        <h3>💪 Main Strengths</h3>
-        <ul class="cv-list">${strengthsHtml || "<li>No strengths listed.</li>"}</ul>
+        <h3>${T.strengths}</h3>
+        <ul class="cv-list">${strengthsHtml || `<li>${T.none}</li>`}</ul>
       </div>
       <div class="card">
-        <h3>🧠 Core Skills</h3>
-        <div class="skill-chips">${skillsHtml || "<span style='color:var(--muted);'>None extracted.</span>"}</div>
+        <h3>${T.skills}</h3>
+        <div class="skill-chips">${skillsHtml || `<span style='color:var(--muted);'>${T.none}</span>`}</div>
       </div>
       <div class="card">
-        <h3>🏢 Most Suitable Areas of Work</h3>
-        ${areasHtml || "<div style='color:var(--muted);'>None listed.</div>"}
+        <h3>${T.areas}</h3>
+        ${areasHtml || `<div style='color:var(--muted);'>${T.none}</div>`}
       </div>
       <div class="card">
-        <h3>🎯 Most Compatible Job Positions</h3>
-        ${positionsHtml || "<div style='color:var(--muted);'>None listed.</div>"}
+        <h3>${T.positions}</h3>
+        ${positionsHtml || `<div style='color:var(--muted);'>${T.none}</div>`}
       </div>
       <div class="card">
-        <h3>⚠️ Important Gaps &amp; Recommendations</h3>
-        ${gapsHtml || "<div style='color:var(--muted);'>No critical gaps flagged.</div>"}
+        <h3>${T.gaps}</h3>
+        ${gapsHtml || `<div style='color:var(--muted);'>${T.none}</div>`}
       </div>
       <div class="card">
-        <h3>🔎 LinkedIn Peer Titles (3-Min Market Scan)</h3>
+        <h3>${T.peers}</h3>
         ${
           data.peer_scan_note
             ? `<p style="font-size:0.8rem; color:#fde68a; margin-top:0;">${escapeHtml(data.peer_scan_note)}</p>`
-            : `<p style="font-size:0.8rem; color:var(--muted); margin-top:0;">Synthesized from ${data.peer_scan_count || 0} LinkedIn peer profile(s) with similar backgrounds.</p>`
+            : `<p style="font-size:0.8rem; color:var(--muted); margin-top:0;">${T.peerSummary(data.peer_scan_count || 0)}</p>`
         }
-        ${peersHtml || "<div style='color:var(--muted);'>No peer titles found.</div>"}
+        ${peersHtml || `<div style='color:var(--muted);'>${T.none}</div>`}
       </div>
     </div>
   `;
@@ -1920,7 +1994,9 @@ function closeModal(id) {
 }
 
 function copyText(id) {
-  navigator.clipboard.writeText(document.getElementById(id).textContent);
+  const el = document.getElementById(id);
+  const txt = el ? (el.value !== undefined ? el.value : el.textContent) : "";
+  navigator.clipboard.writeText(txt || "");
 }
 
 function escapeHtml(s) {

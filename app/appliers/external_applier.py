@@ -144,9 +144,11 @@ async def apply_external_job(
         if decision == "abort":
             return "abort"
 
-    if not auto_submit:
+    # Always pause for user approval if a Cover/T-Letter was generated/inserted, even when auto_submit is on
+    if not auto_submit or job.get("_letter_requires_approval"):
+        letter_note = " (Cover Letter generated — please review & approve it before submitting!)" if job.get("_letter_requires_approval") else ""
         decision = await browser_manager.request_human_action(
-            reason=f"Filled {filled_count} field(s){' + uploaded CV' if cv_uploaded else ''}! Review your application in the browser window, click Submit on the site, and then click Resume to mark as Applied (or enable Auto-Submit).",
+            reason=f"Filled {filled_count} field(s){' + uploaded CV' if cv_uploaded else ''}{letter_note}. Review in the browser window, click Submit on the site, and then click Resume to mark as Applied.",
             url=page.url,
             job_id=job_id,
             job_title=title_label,

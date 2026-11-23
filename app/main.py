@@ -55,6 +55,16 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Job Hunter AI", lifespan=lifespan)
+
+
+@app.middleware("http")
+async def disable_static_cache(request, call_next):
+    response = await call_next(request)
+    if request.url.path == "/" or request.url.path.startswith("/static/"):
+        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    return response
+
+
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 
@@ -889,21 +899,32 @@ async def toggle_select_job(job_id: int, selected: bool = True):
     return {"id": job_id, "selected": selected}
 
 
+class MaterialsRequestPayload(BaseModel):
+    letter_type: str = "both"  # "t_letter" | "cover_letter" | "both"
+    regenerate: bool = True
+
+
 @app.post("/api/jobs/{job_id}/materials")
-async def generate_materials(job_id: int):
+async def generate_materials(job_id: int, payload: MaterialsRequestPayload | None = None):
     job = await db.get_job(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
+    ltype = (payload.letter_type if payload else "both").lower()
+    regen = payload.regenerate if payload else True
     try:
-        mats = await ai_engine.generate_application_materials(job)
+        out: dict[str, str] = {}
+        if ltype in ("t_letter", "both"):
+            t_text = await ai_engine.generate_single_letter(job, letter_type="t_letter", regenerate=regen)
+            await db.update_job(job_id, generated_t_letter=t_text)
+            out["t_letter"] = t_text
+        if ltype in ("cover_letter", "both"):
+            c_text = await ai_engine.generate_single_letter(job, letter_type="cover_letter", regenerate=regen)
+            await db.update_job(job_id, generated_cover_letter=c_text)
+            out["cover_letter"] = c_text
+        return out
     except Exception as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-    await db.update_job(
-        job_id,
-        generated_t_letter=mats["t_letter"],
-        generated_cover_letter=mats["cover_letter"],
-    )
-    return mats
+        traceback.print_exc()
+        raise HTTPException(status_code=400, detail=f"{type(exc).__name__}: {exc}")
 
 
 @app.delete("/api/jobs/{job_id}")

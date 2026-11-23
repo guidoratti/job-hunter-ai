@@ -267,12 +267,13 @@ async def apply_linkedin_job(job: dict[str, Any], auto_submit: bool = False) -> 
             if decision == "abort":
                 return "abort"
 
-        # Check for Submit button first
+        # Check for Submit button first (always pause for user approval if a Cover/T-Letter was filled)
         submit_btn = await _find_first(modal, submit_selectors)
         if submit_btn is not None:
-            if not auto_submit:
+            if not auto_submit or job.get("_letter_requires_approval"):
+                letter_note = " A Cover Letter was generated — please review & approve it before submitting." if job.get("_letter_requires_approval") else ""
                 decision = await browser_manager.request_human_action(
-                    reason="LinkedIn Easy Apply is ready to submit! Review in the browser, click Submit, then click Resume (or enable Auto-Submit to skip this pause).",
+                    reason=f"LinkedIn Easy Apply is ready to submit!{letter_note} Review in the browser, click Submit, then click Resume.",
                     url=page.url,
                     job_id=job_id,
                     job_title=title_label,
