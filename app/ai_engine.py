@@ -828,5 +828,137 @@ Return ONLY a valid JSON object:
             "t_letter_examples": str(data.get("t_letter_examples", "")).strip(),
         }
 
+    async def _load_uploaded_docs_only(self, language: str = "pt") -> tuple[str, list[str]]:
+        """Return (formatted_text, filenames) strictly from uploaded documents in Profile & CVs."""
+        lang = "en" if (language or "pt").lower() == "en" else "pt"
+        docs = await db.list_documents(include_text=True)
+        if not docs:
+            raise RuntimeError("No uploaded documents found. Upload your CV / work history files in 'Profile & CVs' first.")
+
+        seen: set[str] = set()
+        unique_docs = []
+        for d in docs:
+            key = f"{d['language']}:{d['filename']}"
+            if key not in seen:
+                seen.add(key)
+                unique_docs.append(d)
+
+        unique_docs.sort(
+            key=lambda d: (
+                0 if (d.get("priority") or "primary").lower() == "primary" else 1,
+                0 if (d.get("language") or "").lower() == lang else 1,
+                0 if d.get("doc_type") == "resume" else 1,
+            )
+        )
+
+        blocks = []
+        filenames = []
+        for d in unique_docs:
+            txt = (d.get("extracted_text") or "").strip()
+            if txt:
+                p_lbl = "PRIMARY" if (d.get("priority") or "primary").lower() == "primary" else "SECONDARY"
+                l_lbl = (d.get("language") or "pt").upper()
+                blocks.append(f"=== [{p_lbl} | {l_lbl}] {d['filename']} ({d['doc_type']}) ===\n{txt[:16000]}")
+                filenames.append(f"{d['filename']} ({l_lbl})")
+
+        if not blocks:
+            raise RuntimeError("Uploaded documents contain no extractable text.")
+        return "\n\n".join(blocks), filenames
+
+    async def extract_peer_search_queries(self, language: str = "pt") -> list[str]:
+        """Generate 3 concise LinkedIn People search queries from uploaded CVs to find peers with similar backgrounds."""
+        if not await self.has_any_provider():
+            return []
+        docs_text, _ = await self._load_uploaded_docs_only(language=language)
+        prompt = f"""Based ONLY on the uploaded CV/work-history documents below, generate 3 short LinkedIn People search queries (3 to 5 keywords each) to find professionals with a very similar background, skills, and domain so we can see what job titles they use.
+
+DOCUMENTS:
+{docs_text[:12000]}
+
+Return ONLY a valid JSON object:
+{{"queries": ["query 1", "query 2", "query 3"]}}
+"""
+        try:
+            raw = await self._generate_for_role("matcher", prompt)
+            data = _extract_json_block(raw or "{}")
+            queries = [str(q).strip() for q in data.get("queries", []) if str(q).strip()]
+            return queries[:3]
+        except Exception:
+            return []
+
+    async def analyze_cv_documents(
+        self,
+        language: str = "pt",
+        peer_scan: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """
+        Perform a candid, critical audit strictly from the user's uploaded documents in Profile & CVs,
+        enriched with optional LinkedIn peer-title scan results, strictly in EN or PT.
+        """
+        lang = "en" if (language or "pt").lower() == "en" else "pt"
+        lang_name = "English" if lang == "en" else "Brazilian Portuguese"
+
+        if not await self.has_any_provider():
+            raise RuntimeError("No AI provider API key or local Ollama server is configured. Set one up in Settings first.")
+
+        docs_text, filenames = await self._load_uploaded_docs_only(language=lang)
+        peer_headlines = (peer_scan or {}).get("headlines") or []
+        peer_note = (peer_scan or {}).get("note") or ""
+
+        peer_section = (
+            "LIVE LINKEDIN PEER HEADLINES (profiles with similar skills/domains):\n"
+            + "\n".join(f"- {h}" for h in peer_headlines[:35])
+            if peer_headlines
+            else f"LIVE LINKEDIN PEER SCAN NOTE: {peer_note or 'No live headlines collected; infer common equivalent LinkedIn titles used by peers with this exact background.'}"
+        )
+
+        prompt = f"""You are a candid, senior executive career coach performing a CRITICAL AUDIT of a candidate based SOLELY on their uploaded documents below (do not assume anything outside these documents).
+
+UPLOADED DOCUMENTS:
+{docs_text[:26000]}
+
+{peer_section}
+
+INSTRUCTIONS:
+1. Write EVERY single field strictly in {lang_name}.
+2. Be constructive, specific, and genuinely critical — do not flatter blindly. Call out real gaps (e.g., missing certifications, limited hands-on coding/tooling, unclear metrics, title mismatches, ATS keyword blind spots).
+3. Base everything strictly on evidence inside the uploaded documents.
+4. Synthesize the LinkedIn peer headlines into concrete, searchable job titles that similar professionals use on LinkedIn.
+
+Return ONLY a valid JSON object with these exact keys:
+{{
+  "executive_verdict": "2-3 candid sentences summarizing market positioning and competitiveness",
+  "main_strengths": ["strength 1 with concrete evidence", "strength 2", "... (5-7 items)"],
+  "core_skills": ["skill 1", "skill 2", "... (10-16 concise skill tags)"],
+  "suitable_areas": [
+    {{"area": "Area / Sector name", "why": "1-2 sentences grounded in the documents"}}
+  ],
+  "compatible_positions": [
+    {{"title": "Exact searchable job title", "fit_level": "High" | "Strong" | "Adjacent", "why": "1-2 sentences"}}
+  ],
+  "important_gaps": [
+    {{"gap": "Specific gap (e.g. missing certification or hands-on experience)", "severity": "High" | "Medium" | "Low", "recommendation": "Actionable way to close or frame this gap"}}
+  ],
+  "linkedin_peer_titles": [
+    {{"title": "Job title used by similar LinkedIn profiles", "insight": "Why peers with this background use this title"}}
+  ]
+}}
+"""
+        raw_text = await self._generate_for_role("writer", prompt)
+        data = _extract_json_block(raw_text or "{}")
+        return {
+            "language": lang,
+            "analyzed_files": filenames,
+            "peer_scan_count": len(peer_headlines),
+            "peer_scan_note": peer_note,
+            "executive_verdict": str(data.get("executive_verdict", "")).strip(),
+            "main_strengths": data.get("main_strengths") or [],
+            "core_skills": data.get("core_skills") or [],
+            "suitable_areas": data.get("suitable_areas") or [],
+            "compatible_positions": data.get("compatible_positions") or [],
+            "important_gaps": data.get("important_gaps") or [],
+            "linkedin_peer_titles": data.get("linkedin_peer_titles") or [],
+        }
+
 
 ai_engine = AIEngine()

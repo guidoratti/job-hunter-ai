@@ -133,6 +133,17 @@ function connectSSE() {
         updateSearchProgress(msg.data);
       } else if (msg.type === "sso_status") {
         renderSsoStatus(msg.data);
+      } else if (msg.type === "cv_analysis_progress") {
+        updateCvAnalysisProgress(msg.data);
+      } else if (msg.type === "cv_analysis_done") {
+        if (msg.data?.language && msg.data?.result) {
+          cvAnalysisCache[msg.data.language] = msg.data.result;
+          if (cvAnalysisLang === msg.data.language) renderCvAnalysis();
+        }
+        setCvRunButtonState(false);
+      } else if (msg.type === "cv_analysis_error") {
+        setCvRunButtonState(false);
+        alert("CV Analysis failed: " + (msg.data?.error || "Unknown error"));
       } else if (msg.type === "roadblock") {
         showRoadblock(msg.data);
       } else if (msg.type === "roadblock_cleared") {
@@ -1231,6 +1242,225 @@ async function deleteDoc(id) {
   loadDocuments();
 }
 
+// --- CV Analysis Tab ---
+let cvAnalysisLang = "pt";
+let cvAnalysisCache = { pt: null, en: null };
+let cvCountdownTimer = null;
+let cvLastProgress = null;
+
+function updateCvLangButtons() {
+  const ptBtn = document.getElementById("cvLangBtnPt");
+  const enBtn = document.getElementById("cvLangBtnEn");
+  if (ptBtn) ptBtn.classList.toggle("active", cvAnalysisLang === "pt");
+  if (enBtn) enBtn.classList.toggle("active", cvAnalysisLang === "en");
+}
+
+function selectCvAnalysisLang(lang) {
+  cvAnalysisLang = (lang || "pt").toLowerCase() === "en" ? "en" : "pt";
+  updateCvLangButtons();
+  renderCvAnalysis();
+}
+
+function setCvRunButtonState(running) {
+  const btn = document.getElementById("runCvCheckBtn");
+  if (!btn) return;
+  btn.disabled = running;
+  btn.textContent = running ? `⏳ Analyzing (${cvAnalysisLang.toUpperCase()})…` : "🔍 Run Check";
+}
+
+function updateCvAnalysisProgress(p) {
+  cvLastProgress = p;
+  const box = document.getElementById("cvProgressBox");
+  const lbl = document.getElementById("cvProgressLabel");
+  const tmr = document.getElementById("cvProgressTimer");
+  const fill = document.getElementById("cvProgressFill");
+  if (!box) return;
+
+  if (cvCountdownTimer) {
+    clearInterval(cvCountdownTimer);
+    cvCountdownTimer = null;
+  }
+  if (!p || !p.active) {
+    box.classList.remove("visible");
+    setCvRunButtonState(false);
+    return;
+  }
+  box.classList.add("visible");
+  setCvRunButtonState(true);
+  if (lbl) lbl.textContent = p.stage || "Running CV Analysis…";
+
+  const refreshTimer = () => {
+    if (!cvLastProgress || !cvLastProgress.active) return;
+    const rem = Math.max(0, Math.ceil((cvLastProgress.deadline_ts || 0) - Date.now() / 1000));
+    const mm = String(Math.floor(rem / 60)).padStart(2, "0");
+    const ss = String(rem % 60).padStart(2, "0");
+    if (tmr) tmr.textContent = `⏱️ ${mm}:${ss} left • ${cvLastProgress.found || 0} peer profiles scanned`;
+    const pct = Math.min(95, Math.max(12, Math.round(((180 - rem) / 180) * 100)));
+    if (fill) fill.style.width = `${pct}%`;
+  };
+  refreshTimer();
+  cvCountdownTimer = setInterval(refreshTimer, 1000);
+}
+
+async function loadCvAnalysis() {
+  try {
+    const data = await api("/api/cv-analysis");
+    cvAnalysisCache.pt = data.pt || null;
+    cvAnalysisCache.en = data.en || null;
+    setCvRunButtonState(Boolean(data.running));
+    updateCvLangButtons();
+    renderCvAnalysis();
+  } catch {}
+}
+
+async function runCvAnalysis() {
+  setCvRunButtonState(true);
+  try {
+    await api("/api/cv-analysis/run", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ language: cvAnalysisLang }),
+    });
+  } catch (e) {
+    setCvRunButtonState(false);
+    alert("CV Analysis error: " + e.message);
+  }
+}
+
+function addTitleToSearchKeywords(title) {
+  const el = document.getElementById("searchKeywords");
+  if (!el || !title) return;
+  const existing = el.value
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  if (!existing.some((k) => k.toLowerCase() === title.toLowerCase())) {
+    existing.push(title);
+    el.value = existing.join(", ");
+    scheduleAutoSaveAll();
+    alert(`Added "${title}" to Target Job Titles / Keywords!`);
+  } else {
+    alert(`"${title}" is already in your Target Job Titles.`);
+  }
+}
+
+function renderCvAnalysis() {
+  const container = document.getElementById("cvAnalysisContent");
+  if (!container) return;
+  const data = cvAnalysisCache[cvAnalysisLang];
+  if (!data) {
+    container.innerHTML = `<div class="card" style="color:var(--muted); text-align:center;">
+      No <strong>${cvAnalysisLang.toUpperCase()}</strong> CV analysis saved yet. Click <strong>🔍 Run Check</strong> above to audit your uploaded documents in <strong>${cvAnalysisLang === "en" ? "English" : "Brazilian Portuguese"}</strong>.
+    </div>`;
+    return;
+  }
+
+  const filesHtml = (data.analyzed_files || [])
+    .map((f) => `<span class="badge">${escapeHtml(f)}</span>`)
+    .join(" ");
+
+  const strengthsHtml = (data.main_strengths || [])
+    .map((s) => `<li>${escapeHtml(s)}</li>`)
+    .join("");
+
+  const skillsHtml = (data.core_skills || [])
+    .map((s) => `<span class="skill-chip">${escapeHtml(s)}</span>`)
+    .join("");
+
+  const areasHtml = (data.suitable_areas || [])
+    .map(
+      (a) => `<div class="cv-item-card">
+        <div class="cv-item-header"><strong>${escapeHtml(a.area)}</strong></div>
+        <div style="font-size:0.85rem; color:#cbd5e1;">${escapeHtml(a.why)}</div>
+      </div>`
+    )
+    .join("");
+
+  const positionsHtml = (data.compatible_positions || [])
+    .map(
+      (p) => `<div class="cv-item-card">
+        <div class="cv-item-header">
+          <div>
+            <strong>${escapeHtml(p.title)}</strong>
+            <span class="badge badge-score-high" style="margin-left:6px;">${escapeHtml(p.fit_level || "Strong")}</span>
+          </div>
+          <button class="btn btn-secondary btn-sm" onclick="addTitleToSearchKeywords('${escapeJs(p.title)}')">+ Add to Search</button>
+        </div>
+        <div style="font-size:0.85rem; color:#cbd5e1;">${escapeHtml(p.why)}</div>
+      </div>`
+    )
+    .join("");
+
+  const gapsHtml = (data.important_gaps || [])
+    .map((g) => {
+      const sev = (g.severity || "Medium").toLowerCase();
+      const sevClass = sev === "high" ? "badge-score-low" : sev === "low" ? "badge-score-high" : "badge-score-mid";
+      return `<div class="cv-item-card">
+        <div class="cv-item-header">
+          <strong>${escapeHtml(g.gap)}</strong>
+          <span class="badge ${sevClass}">${escapeHtml(g.severity || "Medium")}</span>
+        </div>
+        <div style="font-size:0.85rem; color:#cbd5e1;">💡 ${escapeHtml(g.recommendation)}</div>
+      </div>`;
+    })
+    .join("");
+
+  const peersHtml = (data.linkedin_peer_titles || [])
+    .map(
+      (pt) => `<div class="cv-item-card">
+        <div class="cv-item-header">
+          <strong>${escapeHtml(pt.title)}</strong>
+          <button class="btn btn-secondary btn-sm" onclick="addTitleToSearchKeywords('${escapeJs(pt.title)}')">+ Add to Search</button>
+        </div>
+        <div style="font-size:0.85rem; color:#cbd5e1;">${escapeHtml(pt.insight)}</div>
+      </div>`
+    )
+    .join("");
+
+  container.innerHTML = `
+    <div class="card">
+      <div class="row space-between" style="margin-bottom:8px;">
+        <h3 style="margin:0;">Executive Audit Verdict (${(data.language || cvAnalysisLang).toUpperCase()})</h3>
+        <span style="font-size:0.78rem; color:var(--muted);">Updated: ${(data.updated_at || "").slice(0, 19).replace("T", " ")}</span>
+      </div>
+      <p style="margin:0 0 10px; font-size:0.93rem; color:#f1f5f9;">${escapeHtml(data.executive_verdict)}</p>
+      <div class="badges">${filesHtml}</div>
+    </div>
+
+    <div class="grid-2">
+      <div class="card">
+        <h3>💪 Main Strengths</h3>
+        <ul class="cv-list">${strengthsHtml || "<li>No strengths listed.</li>"}</ul>
+      </div>
+      <div class="card">
+        <h3>🧠 Core Skills</h3>
+        <div class="skill-chips">${skillsHtml || "<span style='color:var(--muted);'>None extracted.</span>"}</div>
+      </div>
+      <div class="card">
+        <h3>🏢 Most Suitable Areas of Work</h3>
+        ${areasHtml || "<div style='color:var(--muted);'>None listed.</div>"}
+      </div>
+      <div class="card">
+        <h3>🎯 Most Compatible Job Positions</h3>
+        ${positionsHtml || "<div style='color:var(--muted);'>None listed.</div>"}
+      </div>
+      <div class="card">
+        <h3>⚠️ Important Gaps &amp; Recommendations</h3>
+        ${gapsHtml || "<div style='color:var(--muted);'>No critical gaps flagged.</div>"}
+      </div>
+      <div class="card">
+        <h3>🔎 LinkedIn Peer Titles (3-Min Market Scan)</h3>
+        ${
+          data.peer_scan_note
+            ? `<p style="font-size:0.8rem; color:#fde68a; margin-top:0;">${escapeHtml(data.peer_scan_note)}</p>`
+            : `<p style="font-size:0.8rem; color:var(--muted); margin-top:0;">Synthesized from ${data.peer_scan_count || 0} LinkedIn peer profile(s) with similar backgrounds.</p>`
+        }
+        ${peersHtml || "<div style='color:var(--muted);'>No peer titles found.</div>"}
+      </div>
+    </div>
+  `;
+}
+
 // --- Credentials Vault & SSO Sessions ---
 let ssoPollTimer = null;
 
@@ -1707,5 +1937,6 @@ function escapeJs(s) {
   bindAutoSaveListeners();
   connectSSE();
   await loadProfile();
-  await Promise.all([loadJobs(), loadStats(), loadDocuments(), loadCredentials(), loadSsoStatus(), loadSettings(), loadLogs()]);
+  cvAnalysisLang = (profileCache.preferred_language || "pt").toLowerCase() === "en" ? "en" : "pt";
+  await Promise.all([loadJobs(), loadStats(), loadDocuments(), loadCvAnalysis(), loadCredentials(), loadSsoStatus(), loadSettings(), loadLogs()]);
 })();

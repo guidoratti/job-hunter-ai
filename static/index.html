@@ -43,6 +43,7 @@
       <button class="tab-btn active" data-tab="jobs">Jobs &amp; Apply Queue</button>
       <button class="tab-btn" data-tab="dashboard" onclick="loadStats()">📊 Dashboard</button>
       <button class="tab-btn" data-tab="profile">Profile &amp; CVs (PT / EN / IT)</button>
+      <button class="tab-btn" data-tab="cv-analysis" onclick="loadCvAnalysis()">🔬 CV Analysis</button>
       <button class="tab-btn" data-tab="vault">Auto-Fill &amp; Credential Vault</button>
       <button class="tab-btn" data-tab="settings">Settings &amp; Live Logs</button>
     </nav>
@@ -338,6 +339,43 @@
         </div>
         <div style="margin-top:12px;">
           <button class="btn btn-success" onclick="saveProfile()">💾 Save Profile</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB 2.5: CV ANALYSIS -->
+    <section id="tab-cv-analysis" class="tab-panel">
+      <div class="card">
+        <div class="profile-card-header">
+          <div>
+            <h3>🔬 CV Analysis — Critical Document Audit</h3>
+            <p style="font-size:0.84rem; color:var(--muted); margin:4px 0 0;">
+              Analyzes <strong>solely your uploaded documents</strong> from <em>Profile &amp; CVs</em>, identifies strengths, core skills, suitable areas, compatible roles, and critical gaps, and runs a <strong>3-minute LinkedIn scan</strong> to see what job titles peers with similar CVs use.
+            </p>
+          </div>
+          <div class="profile-lang-actions">
+            <div class="lang-toggle" role="group" aria-label="CV Analysis Language">
+              <button id="cvLangBtnEn" type="button" class="lang-toggle-btn" onclick="selectCvAnalysisLang('en')">EN</button>
+              <button id="cvLangBtnPt" type="button" class="lang-toggle-btn active" onclick="selectCvAnalysisLang('pt')">PT</button>
+            </div>
+            <button id="runCvCheckBtn" type="button" class="btn" onclick="runCvAnalysis()">🔍 Run Check</button>
+          </div>
+        </div>
+
+        <div id="cvProgressBox" class="search-progress-box">
+          <div class="search-progress-header">
+            <span id="cvProgressLabel" style="color:#93c5fd; font-weight:600;">Running CV Analysis…</span>
+            <span id="cvProgressTimer" style="color:var(--muted); font-weight:600;">⏱️ 03:00 left</span>
+          </div>
+          <div class="search-progress-track">
+            <div id="cvProgressFill" class="search-progress-fill" style="width:15%;"></div>
+          </div>
+        </div>
+      </div>
+
+      <div id="cvAnalysisContent">
+        <div class="card" style="color:var(--muted); text-align:center;">
+          Select <strong>PT</strong> or <strong>EN</strong> above and click <strong>🔍 Run Check</strong> to generate a critical analysis from your uploaded CV documents.
         </div>
       </div>
     </section>

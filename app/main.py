@@ -33,6 +33,7 @@ from app.config import BROWSER_PROFILE_DIR, RESUMES_DIR, STATIC_DIR
 from app.document_parser import extract_text_from_file
 from app.scrapers.glassdoor_scraper import search_glassdoor_jobs
 from app.scrapers.indeed_scraper import search_indeed_jobs
+from app.scrapers.linkedin_peer_scraper import scan_linkedin_peer_titles
 from app.scrapers.linkedin_scraper import search_linkedin_jobs
 from app.scrapers.remote_boards_scraper import search_remote_boards
 from app.scrapers.ziprecruiter_scraper import search_ziprecruiter_jobs
@@ -41,6 +42,7 @@ from app.scrapers.ziprecruiter_scraper import search_ziprecruiter_jobs
 runner_state: dict[str, Any] = {
     "searching": False,
     "applying": False,
+    "analyzing_cv": False,
     "current_job_id": None,
 }
 
@@ -496,6 +498,84 @@ async def process_profile_from_docs(payload: ProcessProfilePayload):
     saved = await db.save_profile(profile)
     await browser_manager.log(f"Processed uploaded documents in {lang.upper()} and saved to {lang.upper()} profile.", level="success")
     return saved
+
+
+class CvAnalysisPayload(BaseModel):
+    language: str = "pt"
+
+
+@app.get("/api/cv-analysis")
+async def get_cv_analysis():
+    pt_raw = await db.get_setting("cv_analysis_pt")
+    en_raw = await db.get_setting("cv_analysis_en")
+    return {
+        "running": bool(runner_state.get("analyzing_cv")),
+        "pt": json.loads(pt_raw) if pt_raw else None,
+        "en": json.loads(en_raw) if en_raw else None,
+    }
+
+
+@app.post("/api/cv-analysis/run")
+async def run_cv_analysis(payload: CvAnalysisPayload):
+    if runner_state.get("analyzing_cv"):
+        raise HTTPException(status_code=409, detail="CV Analysis is already running.")
+
+    lang = "en" if (payload.language or "pt").lower() == "en" else "pt"
+
+    # Quick pre-check that documents exist
+    docs = await db.list_documents(include_text=False)
+    if not docs:
+        raise HTTPException(status_code=400, detail="No uploaded documents found. Upload your CV files in 'Profile & CVs' first.")
+
+    async def _run_audit():
+        import time
+
+        runner_state["analyzing_cv"] = True
+        deadline = time.time() + 180
+        await browser_manager.emit("runner_state", runner_state)
+        await browser_manager.emit(
+            "cv_analysis_progress",
+            {
+                "active": True,
+                "stage": f"Reading uploaded documents & generating LinkedIn peer queries ({lang.upper()})…",
+                "deadline_ts": deadline,
+                "found": 0,
+            },
+        )
+        try:
+            await browser_manager.log(f"🔬 Starting CV Analysis ({lang.upper()}) strictly from uploaded documents...")
+            queries = await ai_engine.extract_peer_search_queries(language=lang)
+            peer_scan = {"headlines": [], "note": "No search queries generated."}
+            if queries:
+                remaining = max(15, int(deadline - time.time()))
+                peer_scan = await scan_linkedin_peer_titles(queries=queries, max_seconds=min(180, remaining))
+
+            await browser_manager.emit(
+                "cv_analysis_progress",
+                {
+                    "active": True,
+                    "stage": f"Writer Agent synthesizing critical CV audit in {lang.upper()}…",
+                    "deadline_ts": deadline,
+                    "found": len(peer_scan.get("headlines") or []),
+                },
+            )
+            result = await ai_engine.analyze_cv_documents(language=lang, peer_scan=peer_scan)
+            result["updated_at"] = db.utc_now()
+            await db.set_setting(f"cv_analysis_{lang}", json.dumps(result, ensure_ascii=False), encrypted=False)
+            await browser_manager.log(f"🔬 CV Analysis ({lang.upper()}) complete!", level="success")
+            await browser_manager.emit("cv_analysis_done", {"language": lang, "result": result})
+        except Exception as exc:
+            traceback.print_exc()
+            err_msg = f"{type(exc).__name__}: {exc}"
+            await browser_manager.log(f"🔬 CV Analysis failed: {err_msg}", level="error")
+            await browser_manager.emit("cv_analysis_error", {"language": lang, "error": err_msg})
+        finally:
+            runner_state["analyzing_cv"] = False
+            await browser_manager.emit("cv_analysis_progress", {"active": False, "stage": "", "deadline_ts": 0, "found": 0})
+            await browser_manager.emit("runner_state", runner_state)
+
+    asyncio.create_task(_run_audit())
+    return {"started": True, "language": lang}
 
 
 @app.get("/api/documents")
