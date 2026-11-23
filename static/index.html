@@ -1,0 +1,529 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Job Hunter AI</title>
+  <link rel="icon" type="image/x-icon" href="/static/app_icon.ico" />
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span>🎯 Job Hunter AI</span>
+      <span id="brandTagline" class="sub" style="cursor:pointer;" title="Click for another one" onclick="pickRandomTagline()">We fight bots with AI agents!</span>
+    </div>
+    <div class="browser-bar">
+      <span id="runnerStatus" class="status-pill">Idle</span>
+      <button class="btn btn-sm" onclick="showBrowser()" title="Bring the background browser window to front">👁️ Show Browser</button>
+      <button class="btn btn-secondary btn-sm" onclick="hideBrowser()" title="Minimize the browser back to the background">➖ Hide</button>
+      <button class="btn btn-secondary btn-sm" onclick="openCustomUrl()">Open URL…</button>
+    </div>
+  </header>
+
+  <main class="container">
+    <!-- Human-in-the-Loop Roadblock Banner -->
+    <section id="roadblockBanner" class="roadblock-banner">
+      <div class="roadblock-title">⚠️ Action Required in Interactive Browser</div>
+      <div id="roadblockJob" style="font-weight:600; margin-bottom:4px;"></div>
+      <div id="roadblockReason"></div>
+      <div id="roadblockUrl" style="font-size:0.8rem; color:#cbd5e1; margin-top:4px;"></div>
+      <div class="roadblock-actions">
+        <button id="rbAutofillBtn" class="btn btn-secondary" onclick="autofillBrowser()">Auto-fill Saved Login</button>
+        <span id="rbSsoButtons" class="row" style="gap:6px;"></span>
+        <button class="btn btn-success" onclick="resolveRoadblock('resume')">✅ Done — Resume Automation</button>
+        <button class="btn btn-warning" onclick="resolveRoadblock('skip')">⏭️ Skip This Job</button>
+        <button class="btn btn-danger" onclick="resolveRoadblock('abort')">🛑 Stop Batch</button>
+      </div>
+    </section>
+
+    <!-- Navigation Tabs -->
+    <nav class="tabs">
+      <button class="tab-btn active" data-tab="jobs">Jobs &amp; Apply Queue</button>
+      <button class="tab-btn" data-tab="dashboard" onclick="loadStats()">📊 Dashboard</button>
+      <button class="tab-btn" data-tab="profile">Profile &amp; CVs (PT / EN / IT)</button>
+      <button class="tab-btn" data-tab="vault">Auto-Fill &amp; Credential Vault</button>
+      <button class="tab-btn" data-tab="settings">Settings &amp; Live Logs</button>
+    </nav>
+
+    <!-- TAB 1: JOBS -->
+    <section id="tab-jobs" class="tab-panel active">
+      <div class="card">
+        <h3>1. Search &amp; Match Jobs</h3>
+        <div class="grid-2">
+          <div>
+            <label>Target Job Titles / Keywords (comma-separated)</label>
+            <textarea id="searchKeywords" style="min-height:46px; resize:both;">Product Manager, Engineering Manager, Tech Manager</textarea>
+          </div>
+          <div>
+            <label>Locations (Local Hybrid → Local Remote → International Remote)</label>
+            <textarea id="searchLocations" style="min-height:46px; resize:both;">São Paulo, Brazil; Remote; Europe; United States</textarea>
+          </div>
+        </div>
+
+        <details open style="margin-top:14px; border:1px solid var(--border); border-radius:8px; padding:12px 14px; background:rgba(11,16,32,0.55);">
+          <summary style="cursor:pointer; font-weight:600; font-size:0.9rem; color:#93c5fd;">
+            🧭 Human Fit, Skills, Culture &amp; Personal Positioning (goes beyond job titles)
+          </summary>
+          <div class="grid-3" style="margin-top:12px;">
+            <div>
+              <label>Core Skills &amp; Domains (comma-separated)</label>
+              <textarea id="prefSkills" style="min-height:56px; resize:both;" placeholder="e.g., ITBP, Agile, Lean Six Sigma, Power BI, AI, Broadcast/Media"></textarea>
+            </div>
+            <div>
+              <label>Preferred Industries / Sectors</label>
+              <textarea id="prefIndustries" style="min-height:56px; resize:both;" placeholder="e.g., Media, Tech/SaaS, Education, Finance, Gaming"></textarea>
+            </div>
+            <div>
+              <label>Target Seniority (multi-select)</label>
+              <div id="seniorityDropdown" class="multi-select">
+                <button type="button" class="multi-select-trigger" onclick="toggleSeniorityMenu(event)">
+                  <span id="seniorityDisplay">Manager / Head</span>
+                  <span style="color:var(--muted);">▾</span>
+                </button>
+                <div class="multi-select-menu">
+                  <label class="multi-select-option"><input type="checkbox" name="prefSeniorityOpt" value="Any Seniority" onchange="onSeniorityChange(this)" /> Any Seniority</label>
+                  <label class="multi-select-option"><input type="checkbox" name="prefSeniorityOpt" value="Analyst / Coordinator" onchange="onSeniorityChange(this)" /> Analyst / Coordinator</label>
+                  <label class="multi-select-option"><input type="checkbox" name="prefSeniorityOpt" value="Senior / Lead" onchange="onSeniorityChange(this)" /> Senior / Lead</label>
+                  <label class="multi-select-option"><input type="checkbox" name="prefSeniorityOpt" value="Manager / Head" onchange="onSeniorityChange(this)" checked /> Manager / Head</label>
+                  <label class="multi-select-option"><input type="checkbox" name="prefSeniorityOpt" value="Executive / Director" onchange="onSeniorityChange(this)" /> Executive / Director</label>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="grid-2" style="margin-top:10px;">
+            <div>
+              <label>Company Culture, Values &amp; Work Style</label>
+              <textarea id="prefCulture" style="min-height:68px; resize:both;" placeholder="e.g., Humanized leadership, high autonomy, data-driven, collaborative squads, openness to AI &amp; innovation"></textarea>
+            </div>
+            <div>
+              <label>Personal Positioning / What I'm Really Looking For</label>
+              <textarea id="prefPositioning" style="min-height:68px; resize:both;" placeholder="Describe the human angle: your mission, the kind of team/impact you want, and how you like to work"></textarea>
+            </div>
+          </div>
+          <div class="grid-2" style="margin-top:10px; align-items:end;">
+            <div>
+              <label>Dealbreakers / Red Flags to Avoid (comma-separated)</label>
+              <textarea id="prefDealbreakers" style="min-height:56px; resize:both;" placeholder="e.g., 100% hands-on coding, cold sales, junior level, mandatory relocation"></textarea>
+            </div>
+            <div class="row" style="justify-content:flex-end;">
+              <label style="display:inline-flex; align-items:center; gap:6px; margin:0; color:var(--text);" title="Also run job board searches using your top Core Skills in addition to Job Titles">
+                <input type="checkbox" id="includeSkillsInSearch" /> Also search boards by top Skills
+              </label>
+              <button class="btn btn-secondary btn-sm" onclick="saveMatchPreferences()">💾 Save Preferences</button>
+              <button class="btn btn-secondary btn-sm" onclick="reanalyzeJobs()">🔄 Re-Score Existing Jobs</button>
+            </div>
+          </div>
+        </details>
+
+        <div class="row space-between" style="margin-top:12px;">
+          <div class="row">
+            <label style="display:inline-flex; align-items:center; gap:6px; margin:0; color:var(--text);">
+              <input type="checkbox" id="srcLinkedin" checked /> LinkedIn
+            </label>
+            <label style="display:inline-flex; align-items:center; gap:6px; margin:0; color:var(--text);">
+              <input type="checkbox" id="srcIndeed" checked /> Indeed
+            </label>
+            <label style="display:inline-flex; align-items:center; gap:6px; margin:0; color:var(--text);">
+              <input type="checkbox" id="srcGlassdoor" checked /> Glassdoor
+            </label>
+            <label style="display:inline-flex; align-items:center; gap:6px; margin:0; color:var(--text);">
+              <input type="checkbox" id="srcZipRecruiter" checked /> ZipRecruiter
+            </label>
+            <label style="display:inline-flex; align-items:center; gap:6px; margin:0; color:var(--text);">
+              <input type="checkbox" id="srcRemotive" checked /> Remotive (Intl Remote)
+            </label>
+            <label style="display:inline-flex; align-items:center; gap:6px; margin:0; color:var(--text);">
+              <input type="checkbox" id="modeHybrid" checked /> Hybrid
+            </label>
+            <label style="display:inline-flex; align-items:center; gap:6px; margin:0; color:var(--text);">
+              <input type="checkbox" id="modeRemote" checked /> Remote
+            </label>
+            <label style="display:inline-flex; align-items:center; gap:6px; margin:0; color:var(--text);">
+              <input type="checkbox" id="easyOnly" /> LinkedIn Easy Apply Only
+            </label>
+            <div style="width:90px;">
+              <input type="number" id="maxPerQuery" value="10" min="3" max="50" title="Max results per query (search capped at 50 jobs or 5 minutes)" />
+            </div>
+          </div>
+          <button id="startSearchBtn" class="btn" style="min-width:190px; justify-content:center;" onclick="startSearch()">🔍 Search &amp; Score Jobs</button>
+        </div>
+
+        <div class="row space-between" style="margin-top:8px;">
+          <button class="btn btn-secondary" onclick="openManualJobModal()">+ Add Job URL</button>
+          <div class="row" style="gap:8px;">
+            <button id="stopSearchBtn" class="btn btn-danger" onclick="stopSearch()" disabled title="Interrupt the active job search">🛑 STOP</button>
+            <button id="refreshSearchBtn" class="btn btn-warning" style="min-width:190px; justify-content:center;" onclick="refreshSearch()" title="Delete all previous job listings and run a clean search">🔄 Refresh Search</button>
+          </div>
+        </div>
+
+        <!-- Live Search Progress Bar (capped at 50 jobs or 5 minutes) -->
+        <div id="searchProgressBox" class="search-progress-box">
+          <div class="search-progress-header">
+            <span id="searchProgressLabel" style="color:#93c5fd; font-weight:600;">Searching &amp; Matching…</span>
+            <span id="searchProgressCount" style="color:var(--muted); font-weight:600;">⏱️ 05:00 • 0 / 50 jobs (0%)</span>
+          </div>
+          <div class="search-progress-track">
+            <div id="searchProgressFill" class="search-progress-fill"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="row space-between">
+          <div class="row">
+            <select id="filterStatus" onchange="loadJobs()" style="width:150px;">
+              <option value="all">All Statuses</option>
+              <option value="new">New</option>
+              <option value="applied">Applied</option>
+              <option value="needs_action">Needs Action</option>
+              <option value="skipped">Skipped</option>
+              <option value="failed">Failed</option>
+            </select>
+            <select id="filterSalaryFit" onchange="loadJobs()" style="width:170px;">
+              <option value="all">All Salaries</option>
+              <option value="in_or_above">💰 In / Above Range</option>
+              <option value="below_range">⚠️ Below Range</option>
+              <option value="unknown">Unknown Salary</option>
+            </select>
+            <label style="display:inline-flex; align-items:center; gap:6px; margin:0;">
+              Min Match:
+              <input type="number" id="filterMinScore" value="0" min="0" max="100" style="width:72px;" onchange="loadJobs()" />%
+            </label>
+            <button class="btn btn-secondary btn-sm" onclick="selectStrongMatches()">Select Strong Matches (≥75%)</button>
+          </div>
+          <div class="row">
+            <label style="display:inline-flex; align-items:center; gap:6px; margin:0; color:var(--text);" title="When unchecked, the browser pauses right before final Submit so you can verify.">
+              <input type="checkbox" id="autoSubmitToggle" /> Auto-Submit (skip final review pause)
+            </label>
+            <button id="applySelectedBtn" class="btn btn-success" onclick="applySelected()">🚀 Apply to Selected (<span id="selectedCount">0</span>)</button>
+            <button id="applyAllBtn" class="btn" onclick="applyAll()">⚡ Apply to All (<span id="applicableCount">0</span>)</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Live Agent Activity Panel (always visible on Jobs tab) -->
+      <div id="agentActivityCard" class="agent-activity-card">
+        <div class="row space-between">
+          <div style="display:flex; align-items:center; gap:8px;">
+            <span id="agentActivityDot" style="font-size:0.9rem;">🤖</span>
+            <strong style="font-size:0.88rem;">Live Agent Activity:</strong>
+            <span id="agentCurrentAction" style="font-size:0.85rem; color:#93c5fd;">Idle — ready to search or apply.</span>
+          </div>
+          <button class="btn btn-secondary btn-sm" onclick="showBrowser()">👁️ Watch in Browser</button>
+        </div>
+        <div id="agentMiniLog" class="agent-mini-log"></div>
+      </div>
+
+      <div id="jobsList"></div>
+    </section>
+
+    <!-- TAB 1.5: ANALYTICS DASHBOARD -->
+    <section id="tab-dashboard" class="tab-panel">
+      <div class="row space-between" style="margin-bottom:14px;">
+        <h3 style="margin:0;">📊 Performance &amp; Application Analytics</h3>
+        <div class="row" style="gap:8px;">
+          <button class="btn btn-secondary btn-sm" onclick="loadStats()">🔄 Refresh Stats</button>
+          <button class="btn btn-danger btn-sm" onclick="clearStats()">🗑️ Clear Statistics</button>
+        </div>
+      </div>
+      <div id="kpiGrid" class="kpi-grid"></div>
+      <div class="grid-2">
+        <div class="card">
+          <h3>By Platform</h3>
+          <div id="chartPlatform"></div>
+        </div>
+        <div class="card">
+          <h3>By Application Status</h3>
+          <div id="chartStatus"></div>
+        </div>
+        <div class="card">
+          <h3>By Salary Fit (vs. Your Range)</h3>
+          <div id="chartSalary"></div>
+        </div>
+        <div class="card">
+          <h3>By Priority Tier &amp; Language</h3>
+          <div id="chartPriority"></div>
+          <hr style="border:0; border-top:1px solid var(--border); margin:12px 0;" />
+          <div id="chartLanguage"></div>
+        </div>
+        <div class="card">
+          <h3>Top Positions / Roles</h3>
+          <div id="chartPositions"></div>
+        </div>
+        <div class="card">
+          <h3>Top Companies</h3>
+          <div id="chartCompanies"></div>
+        </div>
+      </div>
+      <div class="card">
+        <h3>Recent Jobs &amp; Applications</h3>
+        <div id="recentAppsTable"></div>
+      </div>
+    </section>
+
+    <!-- TAB 2: PROFILE & DOCUMENTS -->
+    <section id="tab-profile" class="tab-panel">
+      <div class="card">
+        <h3>Upload Resumes (PT / EN / IT) &amp; Work History Files</h3>
+        <p style="font-size:0.84rem; color:var(--muted); margin-top:0;">
+          Upload PDF, DOCX, or TXT files. The tool automatically attaches the resume matching each job's language and uses your selected language below (EN / PT) when extracting your Master Profile.
+        </p>
+        <div class="row">
+          <input type="file" id="docFile" accept=".pdf,.docx,.txt,.md" style="max-width:300px;" />
+          <select id="docType" style="width:160px;">
+            <option value="resume">Resume / CV</option>
+            <option value="work_history">Work History</option>
+            <option value="t_letter">T-Letter Sample</option>
+          </select>
+          <select id="docLang" style="width:150px;">
+            <option value="pt">Portuguese (PT)</option>
+            <option value="en">English (EN)</option>
+            <option value="it">Italian (IT)</option>
+          </select>
+          <button id="uploadDocBtn" class="btn" onclick="uploadDocument()">⬆️ Upload File</button>
+        </div>
+        <div id="documentsList" style="margin-top:14px;"></div>
+      </div>
+
+      <div class="card">
+        <div class="profile-card-header">
+          <h3>Master Candidate Profile</h3>
+          <div class="profile-lang-actions">
+            <div class="lang-toggle" role="group" aria-label="Profile Language">
+              <button id="langBtnEn" type="button" class="lang-toggle-btn" onclick="setPreferredLanguage('en')">EN</button>
+              <button id="langBtnPt" type="button" class="lang-toggle-btn active" onclick="setPreferredLanguage('pt')">PT</button>
+            </div>
+            <button id="processProfileBtn" type="button" class="btn" onclick="processProfileFromDocs()">⚙️ Process</button>
+          </div>
+        </div>
+        <div class="grid-3">
+          <div><label>Full Name</label><input type="text" id="profName" /></div>
+          <div><label>Email</label><input type="text" id="profEmail" /></div>
+          <div><label>Phone</label><input type="text" id="profPhone" /></div>
+          <div><label>LinkedIn URL</label><input type="text" id="profLinkedin" /></div>
+          <div><label>City</label><input type="text" id="profCity" /></div>
+          <div>
+            <label>Salary Currency &amp; Period</label>
+            <div class="row" style="gap:6px;">
+              <select id="profSalaryCurrency" style="width:45%;">
+                <option value="BRL">BRL (R$)</option>
+                <option value="USD">USD ($)</option>
+                <option value="EUR">EUR (€)</option>
+              </select>
+              <select id="profSalaryPeriod" style="width:52%;">
+                <option value="monthly">Monthly</option>
+                <option value="yearly">Yearly</option>
+              </select>
+            </div>
+          </div>
+          <div><label>Target Salary — Minimum</label><input type="number" id="profSalaryMin" placeholder="e.g. 18000" min="0" step="500" /></div>
+          <div><label>Target Salary — Maximum</label><input type="number" id="profSalaryMax" placeholder="e.g. 28000" min="0" step="500" /></div>
+        </div>
+        <p style="font-size:0.8rem; color:var(--muted); margin:8px 0 0;">
+          💡 Gemini estimates the market average salary for each job, marks whether it is <strong>In Range</strong>, <strong>Above Range</strong>, or <strong>Below Range</strong> on your dashboard, and automatically uses the role's market average (never below your minimum) when forms ask for salary expectation.
+        </p>
+        <div style="margin-top:12px;">
+          <label>Executive Summary</label>
+          <textarea id="profSummary"></textarea>
+        </div>
+        <div style="margin-top:12px;">
+          <label>Work History, Quantified Achievements &amp; Skills</label>
+          <textarea id="profHistory" style="min-height:220px;"></textarea>
+        </div>
+        <div style="margin-top:12px;">
+          <label>T-Letter Style &amp; Instructions</label>
+          <textarea id="profTLetters" style="min-height:130px;"></textarea>
+        </div>
+        <div style="margin-top:12px;">
+          <button class="btn btn-success" onclick="saveProfile()">💾 Save Profile</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB 3: AUTO-FILL & CREDENTIAL VAULT -->
+    <section id="tab-vault" class="tab-panel">
+      <div class="card">
+        <h3>Quick-Add SSO / Automated Login Accounts</h3>
+        <p style="font-size:0.85rem; color:var(--muted); margin-top:0;">
+          Click any platform below to open the minibrowser directly to its login page. Once you sign in, <strong>Job Hunter AI saves your session cookies automatically</strong> in its persistent Chrome profile so it can log in and act across job sites automatically.
+        </p>
+        <div class="sso-grid">
+          <button id="ssoBtn-google" class="sso-card-btn" onclick="connectSso('google')">
+            <span>🔵 Google SSO</span><span id="ssoStatus-google" style="font-size:0.75rem; color:var(--muted);">Sign in →</span>
+          </button>
+          <button id="ssoBtn-linkedin" class="sso-card-btn" onclick="connectSso('linkedin')">
+            <span>💼 LinkedIn SSO</span><span id="ssoStatus-linkedin" style="font-size:0.75rem; color:var(--muted);">Sign in →</span>
+          </button>
+          <button id="ssoBtn-microsoft" class="sso-card-btn" onclick="connectSso('microsoft')">
+            <span>🪟 Microsoft SSO</span><span id="ssoStatus-microsoft" style="font-size:0.75rem; color:var(--muted);">Sign in →</span>
+          </button>
+          <button id="ssoBtn-discord" class="sso-card-btn" onclick="connectSso('discord')">
+            <span>🎮 Discord SSO</span><span id="ssoStatus-discord" style="font-size:0.75rem; color:var(--muted);">Sign in →</span>
+          </button>
+        </div>
+
+        <h3 style="margin-top:16px;">Add / Update Encrypted Site or SSO Credential</h3>
+        <p style="font-size:0.82rem; color:var(--muted); margin-top:0;">
+          Passwords are encrypted locally with AES-256 (<code>data/.vault.key</code>) and excluded from Git via <code>.gitignore</code>.
+        </p>
+        <div class="grid-3">
+          <div><label>Site / Account Name</label><input type="text" id="credName" placeholder="e.g., Google, LinkedIn, Gupy" /></div>
+          <div><label>Domain</label><input type="text" id="credDomain" placeholder="e.g., accounts.google.com, gupy.io" /></div>
+          <div>
+            <label>Auto-Login Provider Type</label>
+            <select id="credProvider">
+              <option value="standard">Standard Site Login (Email/Password)</option>
+              <option value="google">Google SSO (Continue with Google)</option>
+              <option value="linkedin">LinkedIn SSO (Continue with LinkedIn)</option>
+              <option value="microsoft">Microsoft SSO (Sign in with Microsoft)</option>
+              <option value="discord">Discord SSO (Login with Discord)</option>
+            </select>
+          </div>
+          <div><label>Email / Username</label><input type="text" id="credUser" placeholder="you@example.com" /></div>
+          <div><label>Password</label><input type="password" id="credPass" placeholder="••••••••" /></div>
+          <div><label>Notes (optional)</label><input type="text" id="credNotes" placeholder="e.g., Primary SSO account" /></div>
+        </div>
+        <div style="margin-top:12px;">
+          <button class="btn" onclick="saveCredential()">🔒 Save Credential</button>
+        </div>
+      </div>
+      <div class="card">
+        <h3>Saved Site &amp; SSO Logins</h3>
+        <div id="credentialsList"></div>
+      </div>
+    </section>
+
+    <!-- TAB 4: SETTINGS & LIVE LOGS -->
+    <section id="tab-settings" class="tab-panel">
+      <div class="card">
+        <h3>🔑 AI Provider API Keys (Encrypted Locally)</h3>
+        <p style="font-size:0.84rem; color:var(--muted); margin-top:0;">
+          Add one or more AI vendors. Keys are encrypted locally in your vault and never committed to Git. You can route each specialized agent to a different vendor and set an automatic cross-vendor failover.
+        </p>
+        <div class="grid-2">
+          <div>
+            <label>Google Gemini API Key <span id="apiKeyStatus-gemini" style="color:var(--success);"></span></label>
+            <div class="row" style="gap:6px;">
+              <input type="password" id="geminiKey" placeholder="AIza..." style="flex:1;" />
+              <button type="button" class="btn btn-secondary btn-sm" onclick="testProvider('gemini')">🧪 Test</button>
+              <a class="btn btn-secondary btn-sm" href="https://aistudio.google.com/apikey" target="_blank" rel="noopener noreferrer" style="text-decoration:none;" title="Generate Google Gemini API key">🔑 Key ↗</a>
+              <a class="btn btn-secondary btn-sm" href="https://aistudio.google.com/billing" target="_blank" rel="noopener noreferrer" style="text-decoration:none;" title="Manage Google AI Studio billing">💳 Billing ↗</a>
+            </div>
+          </div>
+          <div>
+            <label>OpenAI API Key <span id="apiKeyStatus-openai" style="color:var(--success);"></span></label>
+            <div class="row" style="gap:6px;">
+              <input type="password" id="openaiKey" placeholder="sk-..." style="flex:1;" />
+              <button type="button" class="btn btn-secondary btn-sm" onclick="testProvider('openai')">🧪 Test</button>
+              <a class="btn btn-secondary btn-sm" href="https://platform.openai.com/api-keys" target="_blank" rel="noopener noreferrer" style="text-decoration:none;" title="Generate OpenAI API key">🔑 Key ↗</a>
+              <a class="btn btn-secondary btn-sm" href="https://platform.openai.com/settings/organization/billing/overview" target="_blank" rel="noopener noreferrer" style="text-decoration:none;" title="Manage OpenAI billing">💳 Billing ↗</a>
+            </div>
+          </div>
+          <div>
+            <label>Anthropic Claude API Key <span id="apiKeyStatus-anthropic" style="color:var(--success);"></span></label>
+            <div class="row" style="gap:6px;">
+              <input type="password" id="anthropicKey" placeholder="sk-ant-..." style="flex:1;" />
+              <button type="button" class="btn btn-secondary btn-sm" onclick="testProvider('anthropic')">🧪 Test</button>
+              <a class="btn btn-secondary btn-sm" href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener noreferrer" style="text-decoration:none;" title="Generate Anthropic Claude API key">🔑 Key ↗</a>
+              <a class="btn btn-secondary btn-sm" href="https://console.anthropic.com/settings/billing" target="_blank" rel="noopener noreferrer" style="text-decoration:none;" title="Manage Anthropic billing">💳 Billing ↗</a>
+            </div>
+          </div>
+          <div>
+            <label>OpenRouter API Key (1 key → 100+ models, incl. Free) <span id="apiKeyStatus-openrouter" style="color:var(--success);"></span></label>
+            <div class="row" style="gap:6px;">
+              <input type="password" id="openrouterKey" placeholder="sk-or-..." style="flex:1;" />
+              <button type="button" class="btn btn-secondary btn-sm" onclick="testProvider('openrouter')">🧪 Test</button>
+              <a class="btn btn-secondary btn-sm" href="https://openrouter.ai/settings/keys" target="_blank" rel="noopener noreferrer" style="text-decoration:none;" title="Generate OpenRouter API key">🔑 Key ↗</a>
+              <a class="btn btn-secondary btn-sm" href="https://openrouter.ai/settings/credits" target="_blank" rel="noopener noreferrer" style="text-decoration:none;" title="Manage OpenRouter credits">💳 Billing ↗</a>
+            </div>
+          </div>
+          <div style="grid-column: 1 / -1;">
+            <label>🦙 Local Ollama Server URL (100% Free, Offline AI)</label>
+            <div class="row" style="gap:8px;">
+              <input type="url" id="ollamaUrl" placeholder="http://127.0.0.1:11434" style="width:240px; flex:0 0 240px;" />
+              <button type="button" class="btn btn-secondary btn-sm" onclick="testProvider('ollama')">🧪 Test</button>
+              <a class="btn btn-secondary btn-sm" href="https://ollama.com/download" target="_blank" rel="noopener noreferrer" style="text-decoration:none;" title="Download Ollama for Windows">⬇️ Install ↗</a>
+              <button id="setupOllamaBtn" type="button" class="btn btn-success btn-sm" onclick="setupLocalOllama()" title="Start local Ollama server, download recommended models, and auto-configure agents">⚡ Setup Local Server</button>
+            </div>
+          </div>
+        </div>
+
+        <h3 style="margin-top:20px;">🤖 Multi-Agent Model Routing</h3>
+        <p style="font-size:0.84rem; color:var(--muted); margin-top:0;">
+          Assign the ideal model to each specialized agent. If a primary vendor hits a <code>503</code> or rate limit, the tool automatically fails over to your Fallback Model.
+        </p>
+        <div class="grid-2">
+          <div>
+            <label>🔍 Scout / Matcher Agent (Job Scoring &amp; Salary Estimation)</label>
+            <select id="agentMatcherModel" class="agent-model-select"></select>
+          </div>
+          <div>
+            <label>✍️ Writer Agent (T-Letters, Cover Letters &amp; Profile Extraction)</label>
+            <select id="agentWriterModel" class="agent-model-select"></select>
+          </div>
+          <div>
+            <label>📝 Form-Filler Agent (LinkedIn / Gupy / External ATS Forms)</label>
+            <select id="agentFormModel" class="agent-model-select"></select>
+          </div>
+          <div>
+            <label>🛡️ Cross-Vendor Fallback Model (Automatic Failover)</label>
+            <select id="agentFallbackModel" class="agent-model-select" data-allow-none="true"></select>
+          </div>
+        </div>
+
+        <div style="margin-top:14px;">
+          <button class="btn" onclick="saveSettings()">💾 Save Settings</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="row space-between" style="margin-bottom:10px;">
+          <h3 style="margin:0;">Live Activity Log</h3>
+          <button class="btn btn-secondary btn-sm" onclick="loadLogs()">Refresh</button>
+        </div>
+        <div id="logBox" class="log-box"></div>
+        <div class="row" style="justify-content:flex-end; margin-top:14px;">
+          <button class="btn btn-danger" onclick="nuclearReset()">☢️ Nuclear Reset</button>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- T-Letter & Cover Letter Modal -->
+  <div id="letterModal" class="modal-backdrop">
+    <div class="modal">
+      <div class="row space-between" style="margin-bottom:12px;">
+        <h3 id="letterModalTitle" style="margin:0;">Tailored Application Materials</h3>
+        <button class="btn btn-secondary btn-sm" onclick="closeModal('letterModal')">Close</button>
+      </div>
+      <h4>T-Letter (Requirement | Experience)</h4>
+      <pre id="modalTLetter" class="letter-pre"></pre>
+      <button class="btn btn-secondary btn-sm" onclick="copyText('modalTLetter')">📋 Copy T-Letter</button>
+      <h4 style="margin-top:16px;">Cover Letter</h4>
+      <pre id="modalCoverLetter" class="letter-pre"></pre>
+      <button class="btn btn-secondary btn-sm" onclick="copyText('modalCoverLetter')">📋 Copy Cover Letter</button>
+    </div>
+  </div>
+
+  <!-- Manual Job Modal -->
+  <div id="manualJobModal" class="modal-backdrop">
+    <div class="modal" style="max-width:600px;">
+      <div class="row space-between" style="margin-bottom:12px;">
+        <h3 style="margin:0;">Add Job URL Manually</h3>
+        <button class="btn btn-secondary btn-sm" onclick="closeModal('manualJobModal')">Close</button>
+      </div>
+      <div style="display:grid; gap:10px;">
+        <div><label>Job Title</label><input type="text" id="mjTitle" /></div>
+        <div><label>Company</label><input type="text" id="mjCompany" /></div>
+        <div><label>Location</label><input type="text" id="mjLocation" value="São Paulo, SP (Hybrid)" /></div>
+        <div><label>Job / Apply URL</label><input type="url" id="mjUrl" placeholder="https://..." /></div>
+        <div><label>Job Description (paste for AI scoring &amp; T-Letter)</label><textarea id="mjDesc"></textarea></div>
+        <button class="btn btn-success" onclick="submitManualJob()">Analyze &amp; Add Job</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
