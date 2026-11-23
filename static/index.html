@@ -4,13 +4,17 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Job Hunter AI</title>
-  <link rel="icon" type="image/x-icon" href="/static/app_icon.ico" />
+  <link rel="icon" type="image/x-icon" href="/static/app_icon.ico?v=8bit" />
+  <link rel="icon" type="image/png" href="/static/app_icon.png?v=8bit" />
   <link rel="stylesheet" href="/static/styles.css?v=20261123" />
 </head>
 <body>
   <header class="topbar">
     <div class="brand">
-      <span style="cursor:pointer;" title="Click to refresh page" onclick="window.location.reload()">🎯 Job Hunter AI</span>
+      <span style="cursor:pointer; display:inline-flex; align-items:center; gap:8px;" title="Click to refresh page" onclick="window.location.reload()">
+        <img src="/static/app_icon.png?v=8bit" alt="Job Hunter AI" style="width:28px; height:28px; border-radius:6px; image-rendering:pixelated; flex-shrink:0;" />
+        <span>Job Hunter AI</span>
+      </span>
       <span id="brandTagline" class="sub" style="cursor:pointer;" title="Click for another one" onclick="pickRandomTagline()">We fight bots with AI agents!</span>
     </div>
     <div class="browser-bar">
