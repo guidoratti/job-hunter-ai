@@ -75,12 +75,42 @@ async def upload_matching_resume(page, job: dict[str, Any], container=None) -> b
                 continue
             await inp.set_input_files(str(resume_path))
             await browser_manager.log(
-                f"Uploaded resume '{resume['filename']}' ({resume['language'].upper()})",
+                f"📎 Uploaded resume '{resume['filename']}' ({resume['language'].upper()})",
                 job_id=job.get("id"),
             )
             return True
         except Exception:
             continue
+
+    # Fallback for React/Vue dropzones that trigger a file chooser on button click (e.g., Quickin 'ESCOLHER ARQUIVO')
+    upload_btn_texts = (
+        "escolher arquivo",
+        "selecionar arquivo",
+        "enviar currículo",
+        "enviar curriculo",
+        "anexar currículo",
+        "upload resume",
+        "choose file",
+        "attach resume",
+        "carica cv",
+    )
+    for txt in upload_btn_texts:
+        btn = scope.locator(f"button:has-text('{txt}'), label:has-text('{txt}'), [role='button']:has-text('{txt}')").first
+        if await btn.count() > 0:
+            try:
+                if not await btn.is_visible():
+                    continue
+                async with page.expect_file_chooser(timeout=4000) as fc_info:
+                    await btn.click(timeout=3000)
+                fc = await fc_info.value
+                await fc.set_files(str(resume_path))
+                await browser_manager.log(
+                    f"📎 Uploaded resume via file chooser: '{resume['filename']}' ({resume['language'].upper()})",
+                    job_id=job.get("id"),
+                )
+                return True
+            except Exception:
+                continue
     return False
 
 
@@ -106,12 +136,19 @@ async def fill_visible_form_fields(page, job: dict[str, Any], container=None) ->
         }
         const parentLabel = el.closest('label');
         if (parentLabel && parentLabel.innerText.trim()) return parentLabel.innerText.trim();
-        const aria = el.getAttribute('aria-label') || el.getAttribute('placeholder') || el.name || '';
-        const group = el.closest('fieldset, .fb-dash-form-element, .form-group, .field');
+        const group = el.closest('fieldset, .fb-dash-form-element, .form-group, .field, .v-input, .el-form-item');
         if (group) {
           const legend = group.querySelector('legend, label, .fb-dash-form-element__label, span[aria-hidden="true"]');
           if (legend && legend.innerText.trim()) return legend.innerText.trim();
         }
+        // Climb up 2 parent divs for React/Vue layouts (e.g. Quickin) where <label> is a sibling above the input wrapper
+        let p = el.parentElement;
+        for (let depth = 0; depth < 3 && p; depth++) {
+          const lbl = p.querySelector(':scope > label, :scope > div > label');
+          if (lbl && lbl.innerText.trim()) return lbl.innerText.trim();
+          p = p.parentElement;
+        }
+        const aria = el.getAttribute('aria-label') || el.getAttribute('placeholder') || el.name || '';
         return aria.trim();
       }
 

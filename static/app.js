@@ -286,6 +286,25 @@ function hideRoadblock() {
   document.getElementById("roadblockBanner").classList.remove("visible");
 }
 
+async function fillFormNow() {
+  const btn = document.getElementById("rbFillNowBtn");
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = "⏳ Filling Form…";
+  }
+  try {
+    const res = await api("/api/browser/fill-now", { method: "POST" });
+    alert(`📝 ${res.message}`);
+  } catch (e) {
+    alert("Fill Form error: " + e.message);
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = "📝 Fill Form & Upload CV Now";
+    }
+  }
+}
+
 async function resolveRoadblock(decision) {
   await api("/api/browser/roadblock", {
     method: "POST",

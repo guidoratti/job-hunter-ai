@@ -641,6 +641,38 @@ async def resolve_roadblock(payload: RoadblockDecisionPayload):
     return {"resolved": ok, "decision": payload.decision}
 
 
+@app.post("/api/browser/fill-now")
+async def fill_current_browser_form():
+    """Immediately upload matching CV and fill all visible form fields on the active browser tab."""
+    from app.appliers.form_filler import fill_visible_form_fields, upload_matching_resume
+
+    try:
+        page = await browser_manager.get_active_page(bring_to_front=True)
+        rb = browser_manager.current_roadblock or {}
+        job_id = rb.get("job_id") or runner_state.get("current_job_id")
+        job = await db.get_job(job_id) if job_id else None
+        if not job:
+            profile = await db.get_profile()
+            job = {
+                "id": None,
+                "title": await page.title(),
+                "company": "",
+                "location": f"{profile.get('city', '')}, {profile.get('country', '')}",
+                "language": profile.get("preferred_language") or "pt",
+                "is_international": False,
+            }
+        cv_ok = await upload_matching_resume(page, job)
+        filled_count, missing = await fill_visible_form_fields(page, job)
+        msg = f"Filled {filled_count} field(s){' + uploaded CV' if cv_ok else ''}."
+        if missing:
+            msg += f" Remaining for you: {', '.join(missing[:5])}."
+        await browser_manager.log(f"📝 Fill Form Now: {msg}", level="success", job_id=job.get("id"))
+        return {"filled": filled_count, "cv_uploaded": cv_ok, "missing": missing, "message": msg}
+    except Exception as exc:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"{type(exc).__name__}: {exc}")
+
+
 # --- Job Search & Management ---
 
 @app.post("/api/search")
