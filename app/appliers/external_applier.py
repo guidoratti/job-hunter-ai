@@ -33,50 +33,65 @@ async def apply_external_job(
     await page.goto(url, wait_until="domcontentloaded", timeout=45000)
     await asyncio.sleep(2.5)
 
-    # Click initial landing-page Apply button (Gupy, Indeed, Glassdoor, ZipRecruiter, Remotive, Workday, Lever, Greenhouse)
-    landing_apply_texts = (
-        "Candidatar-se para a vaga",
-        "Candidatar-se agora",
-        "Candidatar-se no site da empresa",
-        "Candidatar-se",
-        "Apply for this position",
-        "Apply for this job",
-        "Apply on company site",
-        "Apply on employer site",
-        "Apply now",
-        "Apply Now",
-        "1-Click Apply",
-        "Easy Apply",
-        "Candidati ora",
-        "Candidati",
-        "Apply",
+    # Click initial landing-page Apply button (Quickin, Gupy, Indeed, Glassdoor, ZipRecruiter, Remotive, Workday, Lever, Greenhouse)
+    landing_apply_patterns = (
+        "candidatar-se para a vaga",
+        "candidatar-se agora",
+        "candidatar-se no site da empresa",
+        "candidatar-se",
+        "quero me candidatar",
+        "inscrever-se",
+        "apply for this position",
+        "apply for this job",
+        "apply on company site",
+        "apply on employer site",
+        "apply now",
+        "1-click apply",
+        "easy apply",
+        "candidati ora",
+        "candidati",
+        "apply",
     )
-    # Only click a landing Apply button if no application form inputs are visible yet
-    visible_form_inputs = await page.locator("input[type='text']:visible, input[type='email']:visible, input[type='file']").count()
-    if visible_form_inputs == 0:
-        ctx = page.context
+
+    async def _try_click_landing_apply(cur_page):
+        # Only skip landing click if an actual application form (3+ visible inputs or a file upload) is already open
+        form_inputs = await cur_page.locator("input[type='text']:visible, input[type='email']:visible, input[type='tel']:visible").count()
+        file_inputs = await cur_page.locator("input[type='file']").count()
+        if form_inputs >= 3 or file_inputs > 0:
+            return cur_page, False
+
+        ctx = cur_page.context
         before_pages = list(ctx.pages)
-        for btn_text in landing_apply_texts:
-            clicked_landing = False
-            for role in ("button", "link"):
-                el = page.get_by_role(role, name=btn_text).first
-                if await el.count() > 0:
-                    try:
-                        if await el.is_visible():
-                            await el.click(timeout=5000)
-                            clicked_landing = True
-                            await asyncio.sleep(3.0)
-                            break
-                    except Exception:
+        # Try case-insensitive text match across buttons, links, and role=button (scrolling into view first!)
+        for pat in landing_apply_patterns:
+            loc = cur_page.locator(f"button:has-text('{pat}'), a:has-text('{pat}'), [role='button']:has-text('{pat}')")
+            cnt = await loc.count()
+            for idx in range(min(cnt, 5)):
+                el = loc.nth(idx)
+                try:
+                    txt = (await el.inner_text()).strip().lower()
+                    if not txt or len(txt) > 45:
                         continue
-            if clicked_landing:
-                # If clicking opened a new tab (common on Indeed / Glassdoor / Remotive), switch to it
-                new_pages = [p for p in ctx.pages if p not in before_pages and not p.is_closed()]
-                if new_pages:
-                    page = new_pages[-1]
-                    await page.wait_for_load_state("domcontentloaded", timeout=30000)
-                    await asyncio.sleep(2.0)
-                break
+                    await el.scroll_into_view_if_needed(timeout=3000)
+                    if not await el.is_visible():
+                        continue
+                    await browser_manager.log(f"➡️ Clicking '{txt.title()}' on {cur_page.url[:55]}...", job_id=job_id)
+                    try:
+                        await el.click(timeout=5000)
+                    except Exception:
+                        await el.evaluate("node => node.click()")
+                    await asyncio.sleep(3.0)
+                    new_pages = [p for p in ctx.pages if p not in before_pages and not p.is_closed()]
+                    if new_pages:
+                        cur_page = new_pages[-1]
+                        await cur_page.wait_for_load_state("domcontentloaded", timeout=30000)
+                        await asyncio.sleep(2.0)
+                    return cur_page, True
+                except Exception:
+                    continue
+        return cur_page, False
+
+    page, _clicked_apply = await _try_click_landing_apply(page)
 
     # Check for login / account creation / CAPTCHA roadblock
     roadblock = await detect_login_or_roadblock(page)
@@ -96,8 +111,25 @@ async def apply_external_job(
 
     # Upload language-matched CV and fill visible form fields
     await browser_manager.log(f"📝 Form-Filler Agent uploading CV & filling application fields on {page.url[:60]}...", job_id=job_id)
-    await upload_matching_resume(page, job)
-    missing_fields = await fill_visible_form_fields(page, job)
+    cv_uploaded = await upload_matching_resume(page, job)
+    filled_count, missing_fields = await fill_visible_form_fields(page, job)
+
+    # If 0 fields were filled and no CV uploaded, we may still be on an unusual landing/redirect page
+    if filled_count == 0 and not cv_uploaded and not missing_fields:
+        decision = await browser_manager.request_human_action(
+            reason="Could not detect an open application form on this page yet. Click the Apply / Candidatar-se button in the browser to open the form, then click Resume so the Form-Filler Agent can fill it!",
+            url=page.url,
+            job_id=job_id,
+            job_title=title_label,
+        )
+        if decision == "skip":
+            await db.update_job(job_id, status="skipped", status_note="Skipped: form not detected.")
+            return "skipped"
+        if decision == "abort":
+            return "abort"
+        await asyncio.sleep(1.5)
+        cv_uploaded = await upload_matching_resume(page, job)
+        filled_count, missing_fields = await fill_visible_form_fields(page, job)
 
     if missing_fields:
         decision = await browser_manager.request_human_action(
@@ -114,7 +146,7 @@ async def apply_external_job(
 
     if not auto_submit:
         decision = await browser_manager.request_human_action(
-            reason="Form auto-filled! Review your application in the browser window, click Submit on the site, and then click Resume to mark as Applied.",
+            reason=f"Filled {filled_count} field(s){' + uploaded CV' if cv_uploaded else ''}! Review your application in the browser window, click Submit on the site, and then click Resume to mark as Applied (or enable Auto-Submit).",
             url=page.url,
             job_id=job_id,
             job_title=title_label,

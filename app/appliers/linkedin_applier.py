@@ -253,7 +253,7 @@ async def apply_linkedin_job(job: dict[str, Any], auto_submit: bool = False) -> 
         await upload_matching_resume(page, job, container=modal)
 
         # Fill visible empty fields with Form-Filler Agent in the job's language
-        missing = await fill_visible_form_fields(page, job, container=modal)
+        _filled, missing = await fill_visible_form_fields(page, job, container=modal)
         if missing:
             decision = await browser_manager.request_human_action(
                 reason=f"LinkedIn Easy Apply (Step {step}) needs your input for: {', '.join(missing[:5])}. Fill them in the browser, then click Resume.",

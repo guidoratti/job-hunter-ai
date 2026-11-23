@@ -84,11 +84,11 @@ async def upload_matching_resume(page, job: dict[str, Any], container=None) -> b
     return False
 
 
-async def fill_visible_form_fields(page, job: dict[str, Any], container=None) -> list[str]:
+async def fill_visible_form_fields(page, job: dict[str, Any], container=None) -> tuple[int, list[str]]:
     """
     Inspect visible empty form fields inside `container` (or whole `page`),
-    ask Gemini to answer them in the job's language, and fill them in.
-    Returns a list of field labels that still require human input.
+    ask the Form-Filler Agent to answer them in the job's language, and fill them in.
+    Returns (filled_count, list_of_field_labels_needing_human_input).
     """
     scope = container if container is not None else page
 
@@ -180,10 +180,10 @@ async def fill_visible_form_fields(page, job: dict[str, Any], container=None) ->
         else:
             extracted = await page.evaluate(js_extract, None)
     except Exception:
-        return []
+        return 0, []
 
     if not extracted:
-        return []
+        return 0, []
 
     # Pre-fill standard profile fields, referral source ("LinkedIn"), BR national phone,
     # and on-demand Cover Letter / T-Letter ONLY when the form actually asks for one.
@@ -288,6 +288,7 @@ async def fill_visible_form_fields(page, job: dict[str, Any], container=None) ->
     all_answers = {**direct_answers, **ai_answers}
     field_by_id = {f["id"]: f for f in extracted}
 
+    filled_count = 0
     for fid, val in all_answers.items():
         if val is None or val == "":
             continue
@@ -306,6 +307,7 @@ async def fill_visible_form_fields(page, job: dict[str, Any], container=None) ->
                     parent_text = (await r.locator("xpath=..").inner_text()).lower()
                     if str(val).lower() in (r_val, parent_text) or str(val).lower() in parent_text:
                         await r.check(force=True)
+                        filled_count += 1
                         break
             elif ftype == "select":
                 sel = scope.locator(f"[data-jh-id='{fid}']").first
@@ -313,14 +315,17 @@ async def fill_visible_form_fields(page, job: dict[str, Any], container=None) ->
                     await sel.select_option(label=str(val))
                 except Exception:
                     await sel.select_option(value=str(val))
+                filled_count += 1
             elif ftype == "checkbox":
                 if val is True or str(val).lower() in ("true", "yes", "sim", "sì"):
                     await scope.locator(f"[data-jh-id='{fid}']").first.check(force=True)
+                    filled_count += 1
             else:
                 el = scope.locator(f"[data-jh-id='{fid}']").first
                 await el.fill(str(val))
+                filled_count += 1
         except Exception:
             if meta.get("required"):
                 needs_human_ids.add(fid)
 
-    return [field_by_id[fid]["label"] or fid for fid in needs_human_ids if fid in field_by_id]
+    return filled_count, [field_by_id[fid]["label"] or fid for fid in needs_human_ids if fid in field_by_id]

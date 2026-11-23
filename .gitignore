@@ -13,8 +13,9 @@ __pycache__/
 *.egg-info/
 .pytest_cache/
 
-# OS / IDE
+# OS / IDE / Local helpers
 .DS_Store
 Thumbs.db
 .vscode/
 .idea/
+push_to_github.bat
