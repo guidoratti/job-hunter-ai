@@ -3,11 +3,31 @@
 from __future__ import annotations
 
 from pathlib import Path
+import re
 from typing import Any
 
 from app import database as db
 from app.ai_engine import ai_engine
 from app.browser_manager import browser_manager
+
+
+def format_phone_for_job(raw_phone: str, job: dict[str, Any]) -> str:
+    """For Brazilian jobs, strip the +55 country code since national format is expected."""
+    phone = (raw_phone or "").strip()
+    if not phone:
+        return ""
+    loc_low = (job.get("location") or "").lower()
+    is_br = (not job.get("is_international")) or any(
+        k in loc_low for k in ("brazil", "brasil", "são paulo", "sao paulo", "- sp", ", sp")
+    )
+    if is_br:
+        # Strip leading +55 or 0055 (and optional whitespace/dash)
+        cleaned = re.sub(r"^\s*(?:\+55|0055)[\s\-]*", "", phone)
+        digits = re.sub(r"\D", "", cleaned)
+        if len(digits) in (12, 13) and digits.startswith("55"):
+            cleaned = digits[2:]
+        return cleaned.strip()
+    return phone
 
 
 async def detect_login_or_roadblock(page) -> str | None:
@@ -165,20 +185,60 @@ async def fill_visible_form_fields(page, job: dict[str, Any], container=None) ->
     if not extracted:
         return []
 
-    # Pre-fill obvious cover letter / T-letter textareas if already generated
+    # Pre-fill standard profile fields, referral source ("LinkedIn"), BR national phone,
+    # and on-demand Cover Letter / T-Letter ONLY when the form actually asks for one.
     profile = await db.get_profile()
+    formatted_phone = format_phone_for_job(profile.get("phone", ""), job)
     remaining_for_ai: list[dict[str, Any]] = []
     direct_answers: dict[str, Any] = {}
+
+    heard_about_keywords = (
+        "where did you hear",
+        "how did you hear",
+        "heard about",
+        "referral source",
+        "source of application",
+        "onde soube",
+        "como ficou sabendo",
+        "como soube",
+        "onde encontrou",
+        "onde viu",
+        "como nos conheceu",
+        "come hai saputo",
+        "come ci hai conosciuto",
+    )
+    cover_letter_keywords = (
+        "cover letter",
+        "carta de apresentação",
+        "carta de apresentacao",
+        "lettera di presentazione",
+        "motivation letter",
+        "apresente-se",
+        "why do you want",
+    )
 
     for f in extracted:
         lbl = (f.get("label") or "").lower()
         ftype = f.get("type")
+        opts = f.get("options") or []
+
+        # Rule: Always signal "LinkedIn" when asked where candidate heard about the position
+        if any(k in lbl for k in heard_about_keywords):
+            if ftype in ("select", "radio") and opts:
+                li_opt = next((o for o in opts if "linkedin" in o.lower()), None)
+                if li_opt:
+                    direct_answers[f["id"]] = li_opt
+                    continue
+            elif ftype in ("text", "textarea"):
+                direct_answers[f["id"]] = "LinkedIn"
+                continue
+
         if ftype in ("text", "textarea"):
             if any(k in lbl for k in ("first name", "primeiro nome", "nome proprio")) and "last" not in lbl:
-                direct_answers[f["id"]] = profile.get("full_name", "").split()[0]
+                direct_answers[f["id"]] = (profile.get("full_name") or "").split()[0] if profile.get("full_name") else ""
                 continue
             if any(k in lbl for k in ("last name", "sobrenome", "cognome")):
-                parts = profile.get("full_name", "").split()
+                parts = (profile.get("full_name") or "").split()
                 direct_answers[f["id"]] = " ".join(parts[1:]) if len(parts) > 1 else ""
                 continue
             if any(k in lbl for k in ("full name", "nome completo", "nome e cognome")):
@@ -188,13 +248,31 @@ async def fill_visible_form_fields(page, job: dict[str, Any], container=None) ->
                 direct_answers[f["id"]] = profile.get("email", "")
                 continue
             if any(k in lbl for k in ("phone", "telefone", "celular", "whatsapp", "telefono")):
-                direct_answers[f["id"]] = profile.get("phone", "")
+                direct_answers[f["id"]] = formatted_phone
                 continue
             if "linkedin" in lbl:
                 direct_answers[f["id"]] = profile.get("linkedin_url", "")
                 continue
-            if ftype == "textarea" and any(k in lbl for k in ("cover letter", "carta de apresentação", "lettera di presentazione", "apresente-se", "why do you want")):
+            if ftype == "textarea" and any(k in lbl for k in cover_letter_keywords):
                 letter = job.get("generated_cover_letter") or job.get("generated_t_letter")
+                if not letter:
+                    try:
+                        await browser_manager.log(
+                            f"✍️ Application form requested a Cover Letter — Writer Agent generating one on demand ({(job.get('language') or 'pt').upper()})...",
+                            job_id=job.get("id"),
+                        )
+                        mats = await ai_engine.generate_application_materials(job)
+                        if job.get("id"):
+                            await db.update_job(
+                                job["id"],
+                                generated_t_letter=mats["t_letter"],
+                                generated_cover_letter=mats["cover_letter"],
+                            )
+                        job["generated_t_letter"] = mats["t_letter"]
+                        job["generated_cover_letter"] = mats["cover_letter"]
+                        letter = mats["cover_letter"] or mats["t_letter"]
+                    except Exception as exc:
+                        await browser_manager.log(f"On-demand letter generation failed: {exc}", level="warning", job_id=job.get("id"))
                 if letter:
                     direct_answers[f["id"]] = letter
                     continue

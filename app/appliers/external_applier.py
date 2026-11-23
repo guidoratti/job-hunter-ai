@@ -28,25 +28,6 @@ async def apply_external_job(
     url = target_url or job.get("external_apply_url") or job.get("url")
     title_label = f"{job['title']} @ {job['company']}"
 
-    # Pre-generate T-Letter & Cover Letter in job's language if not already generated
-    if not job.get("generated_cover_letter"):
-        try:
-            await browser_manager.log(
-                f"✍️ Writer Agent drafting tailored T-Letter & Cover Letter ({(job.get('language') or 'pt').upper()}) for {title_label}...",
-                job_id=job_id,
-            )
-            mats = await ai_engine.generate_application_materials(job)
-            await db.update_job(
-                job_id,
-                generated_t_letter=mats["t_letter"],
-                generated_cover_letter=mats["cover_letter"],
-            )
-            job["generated_t_letter"] = mats["t_letter"]
-            job["generated_cover_letter"] = mats["cover_letter"]
-            await browser_manager.log(f"✍️ Tailored T-Letter & Cover Letter ready for {title_label}.", level="success", job_id=job_id)
-        except Exception as exc:
-            await browser_manager.log(f"Could not pre-generate letters ({exc}); continuing with form fill.", level="warning", job_id=job_id)
-
     page = await browser_manager.get_active_page()
     await browser_manager.log(f"Opening external application page: {url}", job_id=job_id)
     await page.goto(url, wait_until="domcontentloaded", timeout=45000)

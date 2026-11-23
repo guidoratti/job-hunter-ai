@@ -728,6 +728,8 @@ FORM FIELDS TO FILL (JSON):
 
 RULES:
 - For "select" or "radio" fields, your answer MUST match one of the provided "options" verbatim.
+- If a field asks where/how the candidate heard about this position (referral/source dropdown or text), ALWAYS answer "LinkedIn" (or select the exact option containing "LinkedIn").
+- For phone number fields on Brazilian jobs, ALWAYS exclude the "+55" country code and use the national format (DDD + number).
 - For "number" fields (e.g. years of experience), return ONLY a plain integer string like "13" or "8".
 - For salary expectation fields ("Pretensão salarial", "Salary expectation", "Aspettativa salariale"): use the realistic market average salary for this position ({est_avg} {est_cur}/{est_per} if > 0, otherwise estimate the market average for this role), ensuring it is at least the candidate's minimum ({u_min} {u_cur}/{u_per}) if a minimum is configured. Return plain numbers if the field type is "number".
 - For "checkbox" fields (terms/privacy/consent), return true only for standard privacy/consent; if unsure, put the field id in "needs_human".
