@@ -6,6 +6,11 @@ if [ ! -f ".venv/bin/python" ]; then
   ./setup.sh
 fi
 
+# Ensure Python 3.9 compatibility backport is present in existing macOS venvs
+.venv/bin/python -c "import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)" 2>/dev/null || \
+  .venv/bin/python -c "import eval_type_backport" 2>/dev/null || \
+  .venv/bin/pip install -q "eval_type_backport>=0.2.0" || true
+
 # Auto-start Ollama in background if installed and not already running
 if command -v ollama >/dev/null 2>&1; then
   if ! curl -s http://127.0.0.1:11434/api/tags >/dev/null 2>&1; then

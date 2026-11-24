@@ -10,7 +10,7 @@ import subprocess
 import traceback
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
@@ -110,11 +110,11 @@ class SearchPayload(BaseModel):
     max_per_query: int = 10
     max_total_results: int = 50
     include_skills_in_search: bool = False
-    match_preferences: dict[str, Any] | None = None
+    match_preferences: Optional[dict[str, Any]] = None
 
 
 class ApplyPayload(BaseModel):
-    job_ids: list[int] | None = None
+    job_ids: Optional[list[int]] = None
     auto_submit: bool = False
 
 
@@ -716,7 +716,7 @@ async def sso_status():
 
 
 @app.post("/api/browser/autofill")
-async def autofill_browser(payload: AutofillPayload | None = None):
+async def autofill_browser(payload: Optional[AutofillPayload] = None):
     provider = payload.provider if payload else ""
     try:
         return await browser_manager.autofill_saved_credentials(provider=provider or None)
@@ -843,7 +843,7 @@ async def stop_search():
 
 
 @app.post("/api/jobs/reanalyze")
-async def reanalyze_new_jobs(match_preferences: dict[str, Any] | None = None):
+async def reanalyze_new_jobs(match_preferences: Optional[dict[str, Any]] = None):
     """Re-score all 'new' jobs with Gemini using updated human/culture/skills preferences."""
     if match_preferences:
         prof = await db.get_profile()
@@ -905,7 +905,7 @@ class MaterialsRequestPayload(BaseModel):
 
 
 @app.post("/api/jobs/{job_id}/materials")
-async def generate_materials(job_id: int, payload: MaterialsRequestPayload | None = None):
+async def generate_materials(job_id: int, payload: Optional[MaterialsRequestPayload] = None):
     job = await db.get_job(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
