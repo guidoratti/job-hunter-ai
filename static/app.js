@@ -1988,6 +1988,93 @@ function appendLog(l) {
   if (curEl && l.message) curEl.textContent = l.message;
 }
 
+// --- Self-Update & Relaunch ---
+async function checkAndApplyUpdate() {
+  const btn = document.getElementById("checkUpdateBtn");
+  const statusEl = document.getElementById("updateStatusText");
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = "⏳ Checking…";
+  }
+  if (statusEl) statusEl.textContent = "Checking GitHub for updates…";
+
+  try {
+    const info = await api("/api/system/check-update");
+    if (!info.update_available) {
+      if (statusEl) {
+        statusEl.textContent = `✅ You are already on the latest version (${info.current_commit || "main"}).`;
+      }
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = "🔄 Check for Updates";
+      }
+      return;
+    }
+
+    const preview = (info.changes || []).slice(0, 5).map((c) => "• " + c).join("\n");
+    const msg =
+      `${info.commits_behind} new update(s) available on GitHub (${info.current_commit} → ${info.latest_commit})!\n\n` +
+      (preview ? `${preview}\n\n` : "") +
+      "Update your local copy and relaunch Job Hunter AI now?\n(Your profile, CVs, jobs, and settings will NOT be touched.)";
+
+    if (!confirm(msg)) {
+      if (statusEl) {
+        statusEl.textContent = `⬆️ ${info.commits_behind} update(s) available (${info.current_commit} → ${info.latest_commit}). Click again when ready to update.`;
+      }
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = "🔄 Check for Updates";
+      }
+      return;
+    }
+
+    if (btn) btn.textContent = "⬇️ Updating…";
+    if (statusEl) statusEl.textContent = "Pulling latest updates from GitHub and preparing to relaunch…";
+
+    const res = await api("/api/system/update", { method: "POST" });
+    if (!res.updated) {
+      if (statusEl) statusEl.textContent = `✅ ${res.message || "Already up to date."}`;
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = "🔄 Check for Updates";
+      }
+      return;
+    }
+
+    if (btn) btn.textContent = "🚀 Relaunching…";
+    if (statusEl) statusEl.textContent = "🚀 Update installed! Relaunching Job Hunter AI — this page will reload automatically…";
+
+    // Poll until the relaunched server is back online, then hard-reload the UI
+    let attempts = 0;
+    const poll = setInterval(async () => {
+      attempts++;
+      try {
+        const r = await fetch("/api/settings", { cache: "no-store" });
+        if (r.ok && attempts >= 2) {
+          clearInterval(poll);
+          window.location.reload();
+        }
+      } catch {
+        // Server is restarting; keep polling
+      }
+      if (attempts > 40) {
+        clearInterval(poll);
+        if (statusEl) statusEl.textContent = "Relaunch is taking longer than expected — refresh the page or start Job Hunter AI manually.";
+        if (btn) {
+          btn.disabled = false;
+          btn.textContent = "🔄 Check for Updates";
+        }
+      }
+    }, 1500);
+  } catch (e) {
+    if (statusEl) statusEl.textContent = `⚠️ Update check failed: ${e.message}`;
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = "🔄 Check for Updates";
+    }
+  }
+}
+
 // --- Helpers ---
 function closeModal(id) {
   document.getElementById(id).classList.remove("open");

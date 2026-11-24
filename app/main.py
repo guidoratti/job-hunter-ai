@@ -7,6 +7,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import traceback
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -29,7 +30,7 @@ from app.ai_engine import (
 from app.appliers.external_applier import apply_external_job
 from app.appliers.linkedin_applier import apply_linkedin_job
 from app.browser_manager import browser_manager
-from app.config import BROWSER_PROFILE_DIR, RESUMES_DIR, STATIC_DIR
+from app.config import BASE_DIR, BROWSER_PROFILE_DIR, RESUMES_DIR, STATIC_DIR
 from app.document_parser import extract_text_from_file
 from app.scrapers.glassdoor_scraper import search_glassdoor_jobs
 from app.scrapers.indeed_scraper import search_indeed_jobs
@@ -980,3 +981,133 @@ async def start_apply(payload: ApplyPayload):
 
     asyncio.create_task(_run_apply())
     return {"started": True, "count": len(jobs)}
+
+
+# --- Self-Update from GitHub Repo & Relaunch ---
+
+def _run_git(args: list[str], timeout: int = 20) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        ["git", *args],
+        cwd=str(BASE_DIR),
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+    )
+
+
+@app.get("/api/system/check-update")
+async def check_for_updates():
+    """Fetch origin/main from GitHub and report whether newer commits are available."""
+    if not (BASE_DIR / ".git").exists():
+        raise HTTPException(status_code=400, detail="This installation is not a git repository. Clone via Git to enable one-click updates.")
+
+    def _check():
+        fetch = _run_git(["fetch", "origin", "main"], timeout=25)
+        if fetch.returncode != 0:
+            err = (fetch.stderr or fetch.stdout or "git fetch failed").strip()
+            raise RuntimeError(f"Could not reach GitHub: {err[:220]}")
+
+        cur = _run_git(["rev-parse", "--short", "HEAD"]).stdout.strip()
+        latest = _run_git(["rev-parse", "--short", "origin/main"]).stdout.strip()
+        cnt_res = _run_git(["rev-list", "--count", "HEAD..origin/main"])
+        behind = int((cnt_res.stdout or "0").strip() or 0)
+        changes: list[str] = []
+        if behind > 0:
+            log_res = _run_git(["log", "--oneline", "-n", "6", "HEAD..origin/main"])
+            changes = [ln.strip() for ln in (log_res.stdout or "").splitlines() if ln.strip()]
+        return {
+            "ok": True,
+            "update_available": behind > 0,
+            "commits_behind": behind,
+            "current_commit": cur,
+            "latest_commit": latest,
+            "changes": changes,
+        }
+
+    try:
+        return await asyncio.to_thread(_check)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.post("/api/system/update")
+async def apply_update_and_relaunch():
+    """Pull latest commits from origin/main, install any new dependencies, and relaunch the server."""
+    if not (BASE_DIR / ".git").exists():
+        raise HTTPException(status_code=400, detail="This installation is not a git repository.")
+
+    def _pull():
+        fetch = _run_git(["fetch", "origin", "main"], timeout=25)
+        if fetch.returncode != 0:
+            raise RuntimeError((fetch.stderr or fetch.stdout or "git fetch failed").strip()[:220])
+
+        old_head = _run_git(["rev-parse", "HEAD"]).stdout.strip()
+        behind = int((_run_git(["rev-list", "--count", "HEAD..origin/main"]).stdout or "0").strip() or 0)
+        if behind == 0:
+            return {"updated": False, "relaunching": False, "commits_applied": 0, "message": "Already up to date!"}
+
+        pull = _run_git(["pull", "--ff-only", "origin", "main"], timeout=30)
+        if pull.returncode != 0:
+            # Fallback to rebase with autostash so local tweaks don't block fast updates
+            pull = _run_git(["pull", "--rebase", "--autostash", "origin", "main"], timeout=30)
+            if pull.returncode != 0:
+                _run_git(["rebase", "--abort"])
+                err = (pull.stderr or pull.stdout or "git pull failed").strip()
+                raise RuntimeError(f"Update conflict — aborted safely: {err[:240]}")
+
+        new_head = _run_git(["rev-parse", "HEAD"]).stdout.strip()
+        changed_files = _run_git(["diff", "--name-only", old_head, new_head]).stdout.splitlines()
+
+        pip_updated = False
+        if "requirements.txt" in changed_files:
+            pip_res = subprocess.run(
+                [sys.executable, "-m", "pip", "install", "-q", "-r", "requirements.txt"],
+                cwd=str(BASE_DIR),
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+            pip_updated = pip_res.returncode == 0
+
+        return {
+            "updated": True,
+            "relaunching": True,
+            "commits_applied": behind,
+            "pip_updated": pip_updated,
+            "message": f"Pulled {behind} update(s) from GitHub. Relaunching Job Hunter AI...",
+        }
+
+    try:
+        res = await asyncio.to_thread(_pull)
+    except Exception as exc:
+        await browser_manager.log(f"Update failed: {exc}", level="error")
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    if res.get("updated"):
+        await browser_manager.log(
+            f"🔄 Pulled {res['commits_applied']} update(s) from GitHub. Relaunching Job Hunter AI...",
+            level="success",
+        )
+
+        async def _relaunch_later():
+            await asyncio.sleep(1.2)
+            try:
+                await browser_manager.close()
+            except Exception:
+                pass
+            relaunch_code = (
+                "import time, subprocess, sys; "
+                "time.sleep(1.5); "
+                f"subprocess.Popen([sys.executable, 'run_server.py'], cwd={repr(str(BASE_DIR))})"
+            )
+            popen_kwargs: dict[str, Any] = {"cwd": str(BASE_DIR)}
+            if sys.platform == "win32":
+                popen_kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS
+            else:
+                popen_kwargs["start_new_session"] = True
+            subprocess.Popen([sys.executable, "-c", relaunch_code], **popen_kwargs)
+            os._exit(0)
+
+        asyncio.create_task(_relaunch_later())
+
+    return res
